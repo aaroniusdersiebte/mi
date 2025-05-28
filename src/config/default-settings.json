@@ -1,0 +1,45 @@
+{
+  "obs": {
+    "url": "ws://localhost:4455",
+    "password": "",
+    "autoConnect": true,
+    "reconnectInterval": 5000,
+    "maxReconnectAttempts": 5
+  },
+  "midi": {
+    "deviceId": null,
+    "deviceName": "",
+    "autoConnect": true,
+    "learningTimeout": 10000
+  },
+  "audio": {
+    "sources": {},
+    "masterVolume": 1.0,
+    "updateRate": 60,
+    "volumeSmoothing": true,
+    "peakHoldTime": 2000
+  },
+  "hotkeys": {
+    "mappings": {},
+    "globalHotkeys": {
+      "toggleMidiLearning": "F1",
+      "refreshSources": "F5",
+      "openSettings": "Ctrl+,",
+      "toggleMasterMute": "F2"
+    }
+  },
+  "ui": {
+    "audioSectionWidth": 50,
+    "theme": "dark",
+    "showVolumeDb": true,
+    "showVolumePercent": true,
+    "animationsEnabled": true,
+    "compactMode": false
+  },
+  "advanced": {
+    "debug": false,
+    "logLevel": "info",
+    "performanceMode": false,
+    "experimentalFeatures": false
+  }
+}

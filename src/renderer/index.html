@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OBS MIDI Mixer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header Bar -->
+        <header class="header-bar">
+            <div class="header-left">
+                <h1 class="app-title">OBS MIDI Mixer</h1>
+                <div class="connection-status">
+                    <div class="status-indicator" id="obsStatus">
+                        <span class="status-dot"></span>
+                        <span class="status-text">OBS: Verbindung...</span>
+                    </div>
+                    <div class="status-indicator" id="midiStatus">
+                        <span class="status-dot"></span>
+                        <span class="status-text">MIDI: Suche...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="header-btn" id="connectBtn" title="Verbindungen prüfen">🔗</button>
+                <button class="header-btn" id="debugBtn" title="Debug-Info">🐛</button>
+                <button class="header-btn" id="settingsBtn" title="Einstellungen">⚙️</button>
+                <button class="header-btn" id="minimizeBtn" title="Minimieren">−</button>
+                <button class="header-btn close" id="closeBtn" title="Schließen">×</button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Audio Section (Left) -->
+            <section class="audio-section" id="audioSection">
+                <div class="section-header">
+                    <h2>Audio Quellen</h2>
+                    <button class="refresh-btn" id="refreshAudio">🔄</button>
+                </div>
+                
+                <div class="audio-sources" id="audioSources">
+                    <!-- Audio sources will be dynamically loaded here -->
+                    <div class="no-sources-message" id="noSourcesMessage">
+                        <p>Keine Audio-Quellen gefunden</p>
+                        <p class="help-text">Verbinde dich mit OBS und stelle sicher, dass Audio-Quellen vorhanden sind</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Resize Handle -->
+            <div class="resize-handle" id="resizeHandle">
+                <div class="resize-line"></div>
+            </div>
+
+            <!-- Hotkeys Section (Right) -->
+            <section class="hotkeys-section" id="hotkeysSection">
+                <div class="section-header">
+                    <h2>MIDI Hotkeys</h2>
+                    <div class="hotkey-buttons">
+                        <button class="learn-btn" id="learnMidiBtn">MIDI Lernen</button>
+                        <button class="test-btn" id="testBtn">🧪 Test</button>
+                    </div>
+                </div>
+                
+                <div class="hotkey-mappings" id="hotkeyMappings">
+                    <div class="no-mappings-message" id="noMappingsMessage">
+                        <p>Keine MIDI-Zuordnungen</p>
+                        <p class="help-text">Drücke "MIDI Lernen" und betätige dein MIDI-Gerät</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Settings Modal -->
+        <div class="modal-overlay" id="settingsModal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Einstellungen</h3>
+                    <button class="modal-close" id="closeSettings">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-group">
+                        <label>OBS WebSocket URL:</label>
+                        <input type="text" id="obsUrl" placeholder="ws://localhost:4455">
+                    </div>
+                    <div class="settings-group">
+                        <label>OBS Passwort:</label>
+                        <input type="password" id="obsPassword" placeholder="Passwort (optional)">
+                    </div>
+                    <div class="settings-group">
+                        <label>MIDI Gerät:</label>
+                        <select id="midiDevice">
+                            <option value="">Automatisch erkennen</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="resetSettings">Zurücksetzen</button>
+                    <button class="btn-primary" id="saveSettings">Speichern</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connection Modal -->
+        <div class="modal-overlay" id="connectionModal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Verbindungsstatus</h3>
+                    <button class="modal-close" id="closeConnection">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="connection-section">
+                        <h4>OBS Studio</h4>
+                        <div class="connection-info" id="obsConnectionInfo">
+                            <p>Status: <span id="obsConnectionStatus">Prüfe...</span></p>
+                            <p>URL: <span id="obsConnectionUrl">ws://localhost:4455</span></p>
+                            <p>Versuche: <span id="obsReconnectAttempts">0</span></p>
+                        </div>
+                        <button class="btn-primary" id="connectObs">OBS Verbinden</button>
+                        <button class="btn-secondary" id="disconnectObs">Trennen</button>
+                    </div>
+                    
+                    <div class="connection-section">
+                        <h4>MIDI Controller</h4>
+                        <div class="connection-info" id="midiConnectionInfo">
+                            <p>Status: <span id="midiConnectionStatus">Prüfe...</span></p>
+                            <p>Gerät: <span id="midiDeviceName">Kein Gerät</span></p>
+                            <p>Verfügbare Geräte: <span id="midiDeviceCount">0</span></p>
+                        </div>
+                        <button class="btn-primary" id="scanMidi">MIDI Scannen</button>
+                        <button class="btn-secondary" id="disconnectMidi">Trennen</button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="refreshConnection">Aktualisieren</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug Modal -->
+        <div class="modal-overlay" id="debugModal" style="display: none;">
+            <div class="modal-content large">
+                <div class="modal-header">
+                    <h3>Debug-Information</h3>
+                    <button class="modal-close" id="closeDebug">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="debug-section">
+                        <h4>App Status</h4>
+                        <pre id="debugAppStatus">Lade...</pre>
+                    </div>
+                    <div class="debug-section">
+                        <h4>MIDI Events (Live)</h4>
+                        <div class="debug-log" id="midiEventLog">Keine Events...</div>
+                        <button class="btn-secondary" id="clearMidiLog">Log löschen</button>
+                    </div>
+                    <div class="debug-section">
+                        <h4>OBS Events (Live)</h4>
+                        <div class="debug-log" id="obsEventLog">Keine Events...</div>
+                        <button class="btn-secondary" id="clearObsLog">Log löschen</button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" id="exportDebug">Debug exportieren</button>
+                    <button class="btn-primary" id="refreshDebug">Aktualisieren</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->  
+    <script src="../modules/settings-manager.js"></script>
+    <script src="../modules/obs-websocket.js"></script>
+    <script src="../modules/midi-controller.js"></script>
+    <script src="../modules/audio-manager.js"></script>
+    <script src="../modules/ui-manager.js"></script>
+    <script src="renderer.js"></script>
+</body>
+</html>
