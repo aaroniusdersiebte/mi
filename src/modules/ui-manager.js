@@ -1,3 +1,4 @@
+// Enhanced UI Manager with Scene Support and Hotkey Creation
 class UIManager {
   constructor() {
     this.elements = {};
@@ -5,11 +6,22 @@ class UIManager {
     this.currentAudioSectionWidth = 50; // Percentage
     this.isLearningMidi = false;
     this.learningTarget = null;
+    this.learningType = null; // 'audio' or 'scene'
+    this.availableScenes = [];
 
-    this.initializeUI();
+    console.log('UIManager: Constructor called');
+    
+    // Wait for DOM to be ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => this.initializeUI());
+    } else {
+      this.initializeUI();
+    }
   }
 
   initializeUI() {
+    console.log('UIManager: Starting initialization...');
+    
     // Cache DOM elements
     this.cacheElements();
     
@@ -19,10 +31,10 @@ class UIManager {
     // Initialize UI state
     this.initializeState();
     
-    // Set up manager listeners
-    this.setupManagerListeners();
+    // Set up manager listeners with delay
+    setTimeout(() => this.setupManagerListeners(), 1000);
 
-    console.log('UIManager initialized');
+    console.log('UIManager: Initialized successfully');
   }
 
   cacheElements() {
@@ -89,6 +101,8 @@ class UIManager {
       exportDebug: document.getElementById('exportDebug'),
       refreshDebug: document.getElementById('refreshDebug')
     };
+    
+    console.log('UIManager: Elements cached');
   }
 
   setupEventListeners() {
@@ -148,11 +162,10 @@ class UIManager {
     document.addEventListener('mousemove', (e) => this.handleResize(e));
     document.addEventListener('mouseup', () => this.stopResize());
     
-    // Keyboard shortcuts - with more debugging
-    document.addEventListener('keydown', (e) => {
-      console.log('Key pressed:', e.key, e.code);
-      this.handleKeyboard(e);
-    });
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+    
+    console.log('UIManager: Event listeners set up');
   }
 
   initializeState() {
@@ -171,18 +184,20 @@ class UIManager {
     this.obsEventBuffer = [];
     this.maxLogEntries = 100;
     
-    // Force update status after short delay
-    setTimeout(() => {
-      this.updateConnectionStatus();
-    }, 1000);
+    console.log('UIManager: State initialized');
   }
 
   setupManagerListeners() {
+    console.log('UIManager: Setting up manager listeners...');
+    
     // OBS Manager listeners
     if (window.obsManager) {
+      console.log('UIManager: Setting up OBS listeners');
       window.obsManager.on('connected', () => {
         this.updateConnectionStatus();
         this.addObsLogEntry('Connection', 'Connected to OBS Studio');
+        // Load scenes when connected
+        this.loadScenes();
       });
       window.obsManager.on('disconnected', () => {
         this.updateConnectionStatus();
@@ -199,24 +214,30 @@ class UIManager {
       window.obsManager.on('audioSourcesUpdated', (sources) => {
         this.addObsLogEntry('Audio', `${sources.length} audio sources found`);
       });
+      window.obsManager.on('scenesUpdated', (scenes) => {
+        this.availableScenes = scenes;
+        this.addObsLogEntry('Scenes', `${scenes.length} scenes loaded`);
+        this.updateSceneButtons();
+      });
     } else {
-      console.warn('OBS Manager not available for UI listeners');
+      console.warn('UIManager: OBS Manager not available for listeners');
     }
 
     // MIDI Controller listeners
     if (window.midiController) {
+      console.log('UIManager: Setting up MIDI listeners');
       window.midiController.on('deviceConnected', (device) => {
-        console.log('UI: MIDI device connected:', device);
+        console.log('UIManager: MIDI device connected:', device);
         setTimeout(() => this.updateConnectionStatus(), 100);
         this.addMidiLogEntry('Device Connected', device?.name || 'Unknown device');
       });
       window.midiController.on('deviceDisconnected', () => {
-        console.log('UI: MIDI device disconnected');
+        console.log('UIManager: MIDI device disconnected');
         setTimeout(() => this.updateConnectionStatus(), 100);
         this.addMidiLogEntry('Device Disconnected', 'Device removed');
       });
       window.midiController.on('devicesUpdated', (devices) => {
-        console.log('UI: MIDI devices updated:', devices);
+        console.log('UIManager: MIDI devices updated:', devices);
         this.updateMidiDevices(devices);
         setTimeout(() => this.updateConnectionStatus(), 100);
       });
@@ -226,11 +247,12 @@ class UIManager {
         this.addMidiLogEntry('MIDI Message', `${message.type}: ${message.id}`);
       });
     } else {
-      console.warn('MIDI Controller not available for UI listeners');
+      console.warn('UIManager: MIDI Controller not available for listeners');
     }
 
     // Audio Manager listeners
     if (window.audioManager) {
+      console.log('UIManager: Setting up Audio Manager listeners');
       window.audioManager.on('sourcesUpdated', (sources) => this.updateAudioSources(sources));
       window.audioManager.on('levelsUpdated', () => this.updateAudioLevels());
       window.audioManager.on('volumeChanged', (data) => this.updateSourceVolume(data));
@@ -238,7 +260,7 @@ class UIManager {
       window.audioManager.on('midiMappingAdded', (data) => this.updateMidiMappings());
       window.audioManager.on('midiMappingRemoved', () => this.updateMidiMappings());
     } else {
-      console.warn('Audio Manager not available for UI listeners');
+      console.warn('UIManager: Audio Manager not available for listeners');
     }
   }
 
@@ -297,7 +319,7 @@ class UIManager {
       const statusDot = this.elements.obsStatus.querySelector('.status-dot');
       const statusText = this.elements.obsStatus.querySelector('.status-text');
       
-      if (obsStatus.connected) {
+      if (obsStatus.connected && obsStatus.identified) {
         statusDot.className = 'status-dot connected';
         statusText.textContent = 'OBS: Verbunden';
       } else if (obsStatus.connecting) {
@@ -309,32 +331,20 @@ class UIManager {
       }
     }
 
-    // MIDI Status - verbesserte Logik
+    // MIDI Status
     if (this.elements.midiStatus) {
       const activeDevice = window.midiController?.getActiveDevice();
       const connectedDevices = window.midiController?.getConnectedDevices() || [];
       const statusDot = this.elements.midiStatus.querySelector('.status-dot');
       const statusText = this.elements.midiStatus.querySelector('.status-text');
       
-      console.log('UI Update: Active device:', activeDevice);
-      console.log('UI Update: Connected devices:', connectedDevices);
-      
       if (activeDevice && activeDevice.name) {
         statusDot.className = 'status-dot connected';
         statusText.textContent = `MIDI: ${activeDevice.name}`;
       } else if (connectedDevices.length > 0) {
-        // Gerät erkannt aber nicht als aktiv gesetzt
         const firstDevice = connectedDevices[0];
         statusDot.className = 'status-dot connected';
         statusText.textContent = `MIDI: ${firstDevice.name}`;
-        
-        // Versuche das erste Gerät zu aktivieren
-        if (window.midiController && firstDevice.id) {
-          console.log('Trying to connect to first available device:', firstDevice.name);
-          setTimeout(() => {
-            window.midiController.connectToDevice(firstDevice.id);
-          }, 100);
-        }
       } else {
         statusDot.className = 'status-dot error';
         statusText.textContent = 'MIDI: Kein Gerät';
@@ -342,9 +352,71 @@ class UIManager {
     }
   }
 
+  // Load scenes from OBS
+  async loadScenes() {
+    try {
+      if (window.obsManager && window.obsManager.isConnected && window.obsManager.isIdentified) {
+        console.log('UIManager: Loading scenes from OBS...');
+        await window.obsManager.getScenes();
+      }
+    } catch (error) {
+      console.error('UIManager: Error loading scenes:', error);
+    }
+  }
+
+  // Update scene buttons in hotkeys section
+  updateSceneButtons() {
+    if (!this.elements.hotkeyMappings) return;
+
+    // Clear existing scene mappings display
+    const existingScenes = this.elements.hotkeyMappings.querySelectorAll('.scene-mapping');
+    existingScenes.forEach(el => el.remove());
+
+    if (this.availableScenes.length === 0) return;
+
+    // Add scene controls section
+    let sceneSection = this.elements.hotkeyMappings.querySelector('.scene-section');
+    if (!sceneSection) {
+      sceneSection = document.createElement('div');
+      sceneSection.className = 'scene-section';
+      sceneSection.innerHTML = `
+        <h3>Szenen-Steuerung</h3>
+        <div class="scene-mappings" id="sceneMappings"></div>
+      `;
+      this.elements.hotkeyMappings.appendChild(sceneSection);
+    }
+
+    const sceneMappings = sceneSection.querySelector('.scene-mappings');
+    sceneMappings.innerHTML = '';
+
+    // Add scene buttons
+    this.availableScenes.forEach(scene => {
+      const sceneDiv = document.createElement('div');
+      sceneDiv.className = 'scene-mapping';
+      sceneDiv.innerHTML = `
+        <div class="scene-info">
+          <span class="scene-name">${scene.name}</span>
+          <button class="assign-scene-btn" data-scene="${scene.name}">MIDI zuordnen</button>
+        </div>
+      `;
+
+      // Add event listener for MIDI assignment
+      const assignBtn = sceneDiv.querySelector('.assign-scene-btn');
+      assignBtn.addEventListener('click', () => {
+        this.startSceneMidiAssignment(scene.name);
+      });
+
+      sceneMappings.appendChild(sceneDiv);
+    });
+
+    console.log('UIManager: Scene buttons updated, found', this.availableScenes.length, 'scenes');
+  }
+
   // Audio sources management
   updateAudioSources(sources) {
     if (!this.elements.audioSources) return;
+
+    console.log('UIManager: Updating audio sources display:', sources.length);
 
     // Clear existing content
     this.elements.audioSources.innerHTML = '';
@@ -359,6 +431,8 @@ class UIManager {
       const sourceElement = this.createAudioSourceElement(source);
       this.elements.audioSources.appendChild(sourceElement);
     });
+
+    console.log('UIManager: Audio sources display updated');
   }
 
   createAudioSourceElement(source) {
@@ -415,7 +489,7 @@ class UIManager {
 
     // MIDI assignment
     assignMidiBtn?.addEventListener('click', () => {
-      this.startMidiAssignment(source.name);
+      this.startAudioMidiAssignment(source.name);
     });
 
     // Remove MIDI mapping
@@ -474,12 +548,14 @@ class UIManager {
     if (this.isLearningMidi) {
       this.stopMidiLearning();
     } else {
-      this.startMidiLearning();
+      this.startGeneralMidiLearning();
     }
   }
 
-  startMidiLearning() {
+  startGeneralMidiLearning() {
     this.isLearningMidi = true;
+    this.learningTarget = null;
+    this.learningType = 'general';
     
     if (this.elements.learnMidiBtn) {
       this.elements.learnMidiBtn.textContent = 'Lernen beenden';
@@ -487,28 +563,18 @@ class UIManager {
     }
     
     window.midiController?.startLearning((midiEvent) => {
-      console.log('MIDI learned:', midiEvent);
+      console.log('UIManager: General MIDI learning captured:', midiEvent);
+      this.showMidiLearningSuccess(midiEvent);
       this.stopMidiLearning();
     });
   }
 
-  stopMidiLearning() {
-    this.isLearningMidi = false;
-    this.learningTarget = null;
-    
-    if (this.elements.learnMidiBtn) {
-      this.elements.learnMidiBtn.textContent = 'MIDI Lernen';
-      this.elements.learnMidiBtn.classList.remove('active');
-    }
-    
-    window.midiController?.stopLearning();
-  }
-
-  startMidiAssignment(sourceName) {
+  startAudioMidiAssignment(sourceName) {
     this.learningTarget = sourceName;
+    this.learningType = 'audio';
     
     window.midiController?.startLearning((midiEvent) => {
-      this.assignMidiToSource(sourceName, midiEvent);
+      this.assignMidiToAudioSource(sourceName, midiEvent);
       this.learningTarget = null;
     });
     
@@ -524,24 +590,84 @@ class UIManager {
     }
   }
 
-  assignMidiToSource(sourceName, midiEvent) {
+  startSceneMidiAssignment(sceneName) {
+    this.learningTarget = sceneName;
+    this.learningType = 'scene';
+    
+    window.midiController?.startLearning((midiEvent) => {
+      this.assignMidiToScene(sceneName, midiEvent);
+      this.learningTarget = null;
+    });
+    
+    // Visual feedback
+    const sceneBtn = document.querySelector(`[data-scene="${sceneName}"]`);
+    if (sceneBtn) {
+      sceneBtn.style.background = 'var(--accent-orange)';
+      sceneBtn.textContent = 'MIDI lernt...';
+      setTimeout(() => {
+        sceneBtn.style.background = '';
+        sceneBtn.textContent = 'MIDI zuordnen';
+      }, 3000);
+    }
+  }
+
+  assignMidiToAudioSource(sourceName, midiEvent) {
     const controlType = midiEvent.type === 'controlchange' ? 'volume' : 'mute';
     window.audioManager?.assignMidiControl(sourceName, midiEvent, controlType);
+    this.showSuccessMessage(`MIDI-Steuerung für "${sourceName}" erstellt!`);
+  }
+
+  assignMidiToScene(sceneName, midiEvent) {
+    if (window.midiController) {
+      window.midiController.mapSceneControl(midiEvent, sceneName);
+      this.showSuccessMessage(`Scene-Hotkey für "${sceneName}" erstellt!`);
+      this.updateSceneMappingsDisplay();
+    }
+  }
+
+  updateSceneMappingsDisplay() {
+    // Update the scene mappings display to show assigned MIDI controls
+    const sceneMappings = window.midiController?.getSceneMappings() || [];
+    
+    sceneMappings.forEach(mapping => {
+      const sceneBtn = document.querySelector(`[data-scene="${mapping.sceneName}"]`);
+      if (sceneBtn) {
+        sceneBtn.textContent = `MIDI: ${mapping.midiDescription}`;
+        sceneBtn.classList.add('mapped');
+      }
+    });
+  }
+
+  stopMidiLearning() {
+    this.isLearningMidi = false;
+    this.learningTarget = null;
+    this.learningType = null;
+    
+    if (this.elements.learnMidiBtn) {
+      this.elements.learnMidiBtn.textContent = 'MIDI Lernen';
+      this.elements.learnMidiBtn.classList.remove('active');
+    }
+    
+    window.midiController?.stopLearning();
   }
 
   onMidiLearningStarted() {
-    // Add visual feedback for learning mode
     document.body.classList.add('midi-learning');
   }
 
   onMidiLearningStopped() {
-    // Remove visual feedback
     document.body.classList.remove('midi-learning');
+  }
+
+  showMidiLearningSuccess(midiEvent) {
+    const description = window.midiController?.getMidiEventDescription(midiEvent);
+    this.showSuccessMessage(`MIDI-Kontrolle erkannt: ${description}`);
   }
 
   updateMidiMappings() {
     const sources = window.audioManager?.getAllAudioSources() || [];
     this.updateAudioSources(sources);
+    this.updateSceneMappingsDisplay();
   }
 
   // Connection Modal
@@ -637,6 +763,9 @@ class UIManager {
       const status = {
         app: window.app?.getAppStatus() || {},
         settings: Object.keys(window.settingsManager?.getAll() || {}).length,
+        audioSources: window.audioManager?.getAllAudioSources().length || 0,
+        scenes: this.availableScenes.length,
+        midiMappings: window.midiController?.getAllMappings().length || 0,
         timestamp: new Date().toLocaleString()
       };
       this.elements.debugAppStatus.textContent = JSON.stringify(status, null, 2);
@@ -714,7 +843,6 @@ class UIManager {
   runConnectionTest() {
     console.log('🧪 Running Connection Test...');
     
-    // Test all managers
     const results = {
       managers: {
         settings: !!window.settingsManager,
@@ -731,7 +859,6 @@ class UIManager {
     if (window.obsManager) {
       results.connections.obs = window.obsManager.getConnectionStatus();
       
-      // Try to connect if not connected
       if (!results.connections.obs.connected) {
         const settings = window.settingsManager?.getObsSettings() || {};
         window.obsManager.connect(settings.url || 'ws://localhost:4455', settings.password || '')
@@ -754,22 +881,14 @@ class UIManager {
       if (devices.length > 0) {
         console.log('✓ MIDI Test: Found', devices.length, 'devices');
         this.showSuccessMessage(`${devices.length} MIDI-Gerät(e) gefunden!`);
-        
-        // Try to connect to first device
-        const firstDevice = devices[0];
-        if (!window.midiController.getActiveDevice() && firstDevice.id) {
-          window.midiController.connectToDevice(firstDevice.id);
-        }
       } else {
         console.log('✗ MIDI Test: No devices found');
         this.showErrorMessage('MIDI-Test', 'Keine MIDI-Geräte gefunden');
       }
     }
     
-    // Log full results
     console.log('Connection Test Results:', results);
     
-    // Update UI
     setTimeout(() => {
       this.updateConnectionStatus();
     }, 500);
@@ -803,13 +922,39 @@ class UIManager {
     }, 5000);
   }
 
+  showSuccessMessage(message) {
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: var(--success-color);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 6px;
+      z-index: 10001;
+      font-size: 14px;
+      animation: slideIn 0.3s ease-out;
+    `;
+    notification.textContent = message;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.remove();
+      }
+    }, 3000);
+  }
+
   exportDebugInfo() {
     const debugData = {
       timestamp: new Date().toISOString(),
       appStatus: window.app?.getAppStatus() || {},
       settings: window.settingsManager?.getAll() || {},
       midiEvents: this.midiEventBuffer || [],
-      obsEvents: this.obsEventBuffer || []
+      obsEvents: this.obsEventBuffer || [],
+      availableScenes: this.availableScenes
     };
     
     const dataStr = JSON.stringify(debugData, null, 2);
@@ -850,17 +995,14 @@ class UIManager {
       this.elements.obsPassword.value = obsSettings.password || '';
     }
     
-    // Update MIDI device dropdown
     this.updateMidiDevices(window.midiController?.getConnectedDevices() || []);
   }
 
   updateMidiDevices(devices) {
     if (!this.elements.midiDevice) return;
     
-    // Clear existing options
     this.elements.midiDevice.innerHTML = '<option value="">Automatisch erkennen</option>';
     
-    // Add device options
     devices.forEach(device => {
       const option = document.createElement('option');
       option.value = device.id;
@@ -868,7 +1010,6 @@ class UIManager {
       this.elements.midiDevice.appendChild(option);
     });
     
-    // Select current device
     const activeDevice = window.midiController?.getActiveDevice();
     if (activeDevice) {
       this.elements.midiDevice.value = activeDevice.id;
@@ -884,10 +1025,8 @@ class UIManager {
     
     const selectedMidiDevice = this.elements.midiDevice?.value;
     
-    // Save settings
     window.settingsManager?.setObsSettings(obsSettings);
     
-    // Reconnect OBS if needed
     if (window.obsManager) {
       window.obsManager.disconnect();
       setTimeout(() => {
@@ -895,40 +1034,12 @@ class UIManager {
       }, 100);
     }
     
-    // Connect to MIDI device if selected
     if (selectedMidiDevice && window.midiController) {
       window.midiController.connectToDevice(selectedMidiDevice);
     }
     
     this.closeSettings();
-    
-    // Show success message
     this.showSuccessMessage('Einstellungen gespeichert und Verbindungen aktualisiert');
-  }
-
-  showSuccessMessage(message) {
-    const notification = document.createElement('div');
-    notification.style.cssText = `
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      background: var(--success-color);
-      color: white;
-      padding: 12px 20px;
-      border-radius: 6px;
-      z-index: 10001;
-      font-size: 14px;
-      animation: slideIn 0.3s ease-out;
-    `;
-    notification.textContent = message;
-    
-    document.body.appendChild(notification);
-    
-    setTimeout(() => {
-      if (notification.parentNode) {
-        notification.remove();
-      }
-    }, 3000);
   }
 
   resetSettings() {
@@ -958,7 +1069,6 @@ class UIManager {
   }
 
   handleKeyboard(e) {
-    // ESC to close modals or stop learning
     if (e.key === 'Escape') {
       if (this.elements.settingsModal.style.display === 'flex') {
         this.closeSettings();
@@ -971,19 +1081,16 @@ class UIManager {
       }
     }
     
-    // F5 to refresh
     if (e.key === 'F5') {
       e.preventDefault();
       this.refreshAudioSources();
     }
     
-    // F1 for connection modal
     if (e.key === 'F1') {
       e.preventDefault();
       this.openConnectionModal();
     }
     
-    // F12 for debug modal
     if (e.key === 'F12') {
       e.preventDefault();
       this.openDebugModal();
@@ -992,17 +1099,12 @@ class UIManager {
 
   // Cleanup
   destroy() {
-    // Remove event listeners and clean up
     document.removeEventListener('mousemove', this.handleResize);
     document.removeEventListener('mouseup', this.stopResize);
     document.removeEventListener('keydown', this.handleKeyboard);
   }
 }
 
-// Export singleton instance - Compatible with both Node.js and Browser
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = new UIManager();
-} else {
-  // Browser environment - set as global variable
-  window.uiManager = new UIManager();
-}
+// Export as global variable
+console.log('Creating UI Manager...');
+window.uiManager = new UIManager();

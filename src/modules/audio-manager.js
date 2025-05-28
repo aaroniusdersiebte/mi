@@ -1,3 +1,4 @@
+// Audio Manager - Fixed for proper initialization
 class AudioManager {
   constructor() {
     this.audioSources = new Map();
@@ -6,33 +7,47 @@ class AudioManager {
     this.updateRate = 60; // Updates per second
     this.isActive = false;
 
-    this.initializeManager();
+    console.log('AudioManager constructor called');
+    
+    // Delayed initialization to ensure other managers are ready
+    setTimeout(() => this.initializeManager(), 500);
   }
 
   initializeManager() {
+    console.log('AudioManager: Starting initialization...');
+    
     // Set up OBS manager listeners
     if (window.obsManager) {
+      console.log('AudioManager: OBS Manager found, setting up listeners');
       this.setupObsListeners();
     } else {
-      // Wait for OBS manager to be available
-      setTimeout(() => this.initializeManager(), 100);
+      console.warn('AudioManager: OBS Manager not yet available, retrying...');
+      setTimeout(() => this.initializeManager(), 1000);
       return;
     }
 
     // Set up MIDI controller listeners
     if (window.midiController) {
+      console.log('AudioManager: MIDI Controller found, setting up listeners');
       this.setupMidiListeners();
+    } else {
+      console.warn('AudioManager: MIDI Controller not available');
     }
 
     // Load saved settings
     this.loadSettings();
+    
+    console.log('AudioManager: Successfully initialized');
   }
 
   setupObsListeners() {
     window.obsManager.on('connected', () => {
       console.log('AudioManager: OBS connected');
-      this.refreshAudioSources();
-      this.startUpdating();
+      // Wait a bit for OBS to be fully ready
+      setTimeout(() => {
+        this.refreshAudioSources();
+        this.startUpdating();
+      }, 1000);
     });
 
     window.obsManager.on('disconnected', () => {
@@ -42,6 +57,7 @@ class AudioManager {
     });
 
     window.obsManager.on('audioSourcesUpdated', (sources) => {
+      console.log('AudioManager: Audio sources updated:', sources.length);
       this.updateAudioSources(sources);
     });
 
@@ -62,6 +78,12 @@ class AudioManager {
     window.midiController.on('deviceConnected', (device) => {
       console.log('AudioManager: MIDI device connected:', device.name);
       window.midiController.loadMappings();
+    });
+
+    // Listen for MIDI messages during learning
+    window.midiController.on('midiMessage', (message) => {
+      console.log('AudioManager: MIDI message received:', message);
+      // This will be handled by UI Manager for learning
     });
   }
 
@@ -84,16 +106,21 @@ class AudioManager {
 
   async refreshAudioSources() {
     try {
+      console.log('AudioManager: Refreshing audio sources...');
       if (window.obsManager && window.obsManager.isConnected) {
         await window.obsManager.getAudioSources();
+      } else {
+        console.warn('AudioManager: OBS not connected, cannot refresh sources');
       }
     } catch (error) {
-      console.error('Error refreshing audio sources:', error);
+      console.error('AudioManager: Error refreshing audio sources:', error);
       this.emit('error', error);
     }
   }
 
   updateAudioSources(sources) {
+    console.log('AudioManager: Updating audio sources:', sources.length);
+    
     // Clear existing sources
     this.audioSources.clear();
 
@@ -101,6 +128,7 @@ class AudioManager {
     sources.forEach(source => {
       const audioSource = this.createAudioSource(source);
       this.audioSources.set(source.name, audioSource);
+      console.log('AudioManager: Added audio source:', source.name);
     });
 
     console.log(`AudioManager: Updated ${sources.length} audio sources`);
@@ -114,8 +142,8 @@ class AudioManager {
     const audioSource = {
       name: obsSource.name,
       kind: obsSource.kind,
-      volume: savedSettings.volume ?? obsSource.volume,
-      muted: savedSettings.muted ?? obsSource.muted,
+      volume: savedSettings.volume ?? obsSource.volume ?? 1.0,
+      muted: savedSettings.muted ?? obsSource.muted ?? false,
       levelMul: obsSource.levelMul || 0,
       levelDb: obsSource.levelDb || -100,
       midiMapping: savedSettings.midiMapping || null,
@@ -260,7 +288,7 @@ class AudioManager {
     const mapping = {
       midiId: midiEvent.id,
       sourceName: sourceName,
-      controlType: controlType, // 'volume' or 'mute'
+      controlType: controlType, // 'volume', 'mute', or 'scene'
       midiDescription: window.midiController.getMidiEventDescription(midiEvent)
     };
 
@@ -284,6 +312,38 @@ class AudioManager {
       mapping
     });
 
+    console.log('AudioManager: MIDI mapping created:', mapping);
+    return mapping;
+  }
+
+  // Scene control methods
+  assignMidiSceneControl(sceneName, midiEvent) {
+    const mapping = {
+      midiId: midiEvent.id,
+      sceneName: sceneName,
+      controlType: 'scene',
+      midiDescription: window.midiController.getMidiEventDescription(midiEvent)
+    };
+
+    // Set up the MIDI mapping for scene switching
+    const action = {
+      type: 'scene',
+      sceneName: sceneName
+    };
+
+    window.midiController.mapControl(midiEvent.id, action);
+    
+    // Save scene mapping
+    const sceneMappings = window.settingsManager?.get('hotkeys.sceneMappings', {}) || {};
+    sceneMappings[midiEvent.id] = mapping;
+    window.settingsManager?.set('hotkeys.sceneMappings', sceneMappings);
+
+    this.emit('sceneMappingAdded', {
+      sceneName,
+      mapping
+    });
+
+    console.log('AudioManager: Scene MIDI mapping created:', mapping);
     return mapping;
   }
 
@@ -389,9 +449,6 @@ class AudioManager {
   }
 }
 
-// Export singleton instance
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = new AudioManager();
-} else {
-  window.audioManager = new AudioManager();
-}
+// Export as global variable
+console.log('Creating Audio Manager...');
+window.audioManager = new AudioManager();

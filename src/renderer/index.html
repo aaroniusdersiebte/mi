@@ -69,7 +69,10 @@
                     <div class="no-mappings-message" id="noMappingsMessage">
                         <p>Keine MIDI-Zuordnungen</p>
                         <p class="help-text">Drücke "MIDI Lernen" und betätige dein MIDI-Gerät</p>
+                        <p class="help-text">Oder ordne Audio-Quellen und Szenen direkt zu</p>
                     </div>
+                    
+                    <!-- Scene mappings will be added here dynamically -->
                 </div>
             </section>
         </main>
@@ -169,14 +172,72 @@
                 </div>
             </div>
         </div>
+
+        <!-- MIDI Learning Overlay -->
+        <div class="midi-learning-overlay" id="midiLearningOverlay" style="display: none;">
+            <div class="learning-content">
+                <div class="learning-icon">🎹</div>
+                <h3>MIDI Learning Aktiv</h3>
+                <p>Bewege einen Regler oder drücke einen Button auf deinem MIDI-Controller</p>
+                <div class="learning-target" id="learningTarget"></div>
+                <button class="btn-secondary" onclick="window.uiManager.stopMidiLearning()">Abbrechen</button>
+            </div>
+        </div>
     </div>
 
-    <!-- Scripts -->  
+    <!-- Scripts - Load in correct order for proper initialization -->
+    <script>
+        console.log('Starting module initialization...');
+        
+        // Global error handling
+        window.addEventListener('error', (event) => {
+            console.error('Global JavaScript Error:', event.error);
+        });
+        
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled Promise Rejection:', event.reason);
+        });
+    </script>
+    
+    <!-- Load managers in dependency order -->
     <script src="../modules/settings-manager.js"></script>
     <script src="../modules/obs-websocket.js"></script>
     <script src="../modules/midi-controller.js"></script>
     <script src="../modules/audio-manager.js"></script>
     <script src="../modules/ui-manager.js"></script>
+    
+    <!-- Load main renderer -->
     <script src="renderer.js"></script>
+    
+    <script>
+        // Module loading verification
+        console.log('=== Module Loading Status ===');
+        console.log('Settings Manager:', typeof window.settingsManager);
+        console.log('OBS Manager:', typeof window.obsManager);
+        console.log('MIDI Controller:', typeof window.midiController);
+        console.log('Audio Manager:', typeof window.audioManager);
+        console.log('UI Manager:', typeof window.uiManager);
+        
+        // Web API availability check
+        console.log('Web MIDI API:', typeof navigator.requestMIDIAccess);
+        console.log('WebSocket API:', typeof WebSocket);
+        console.log('LocalStorage API:', typeof localStorage);
+        
+        // Quick start helper
+        console.log('\n🎛️ OBS MIDI Mixer loaded!');
+        console.log('📋 Quick Commands:');
+        console.log('  debugApp() - Show app status');
+        console.log('  testConnections() - Test all connections'); 
+        console.log('  scanMIDI() - Scan MIDI devices');
+        console.log('  connectOBS() - Connect to OBS');
+        
+        // Auto-start connection test after initialization
+        setTimeout(() => {
+            if (window.uiManager && window.uiManager.runConnectionTest) {
+                console.log('🚀 Running auto connection test...');
+                window.uiManager.runConnectionTest();
+            }
+        }, 3000);
+    </script>
 </body>
 </html>

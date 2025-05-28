@@ -1,25 +1,263 @@
-const OBSWebSocket = require('obs-websocket-js').default;
-
+// OBS WebSocket Manager - Fixed authentication and scene support
 class OBSWebSocketManager {
   constructor() {
-    this.obs = new OBSWebSocket();
+    this.obs = null;
     this.isConnected = false;
     this.isConnecting = false;
+    this.isIdentified = false; // Track identification status
     this.listeners = new Map();
     this.audioSources = new Map();
+    this.scenes = new Map(); // Store scenes
     this.reconnectInterval = null;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
 
-    this.setupEventHandlers();
+    console.log('OBSWebSocketManager: Constructor called');
+    this.initializeOBS();
+  }
+
+  async initializeOBS() {
+    try {
+      // Try electron require first
+      if (typeof window.require !== 'undefined') {
+        try {
+          const OBSWebSocket = window.require('obs-websocket-js').default;
+          this.obs = new OBSWebSocket();
+          this.setupEventHandlers();
+          console.log('OBS WebSocket initialized via electron require');
+          return;
+        } catch (error) {
+          console.warn('Could not load obs-websocket-js via require:', error.message);
+        }
+      }
+
+      // Fallback: Use native WebSocket implementation
+      console.log('Using fallback WebSocket implementation for OBS');
+      this.setupFallbackWebSocket();
+      
+    } catch (error) {
+      console.error('Failed to initialize OBS WebSocket:', error);
+      this.emit('error', error);
+    }
+  }
+
+  setupFallbackWebSocket() {
+    // Simple WebSocket implementation for basic OBS communication
+    this.obs = {
+      connect: (url, password, options) => this.fallbackConnect(url, password, options),
+      disconnect: () => this.fallbackDisconnect(),
+      call: (request, data) => this.fallbackCall(request, data),
+      on: (event, callback) => this.on(event, callback),
+      off: (event, callback) => this.off(event, callback)
+    };
+  }
+
+  async fallbackConnect(url, password, options = {}) {
+    return new Promise((resolve, reject) => {
+      try {
+        console.log('OBS: Connecting to', url);
+        this.websocket = new WebSocket(url);
+        this.messageId = 1;
+        this.pendingRequests = new Map();
+        this.isIdentified = false;
+
+        this.websocket.onopen = () => {
+          console.log('OBS: WebSocket connection opened');
+          this.isConnecting = false;
+          // Don't set isConnected yet - wait for identification
+        };
+
+        this.websocket.onclose = (event) => {
+          console.log('OBS: WebSocket connection closed:', event.code, event.reason);
+          this.isConnected = false;
+          this.isConnecting = false;
+          this.isIdentified = false;
+          this.emit('ConnectionClosed');
+        };
+
+        this.websocket.onerror = (error) => {
+          console.error('OBS: WebSocket error:', error);
+          this.isConnected = false;
+          this.isConnecting = false;
+          this.isIdentified = false;
+          this.emit('ConnectionError', error);
+          reject(error);
+        };
+
+        this.websocket.onmessage = (event) => {
+          this.handleWebSocketMessage(event);
+        };
+
+        // Set up connection timeout
+        setTimeout(() => {
+          if (!this.isIdentified) {
+            console.error('OBS: Connection timeout - not identified within 10 seconds');
+            this.websocket.close();
+            reject(new Error('Connection timeout'));
+          }
+        }, 10000);
+
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  handleWebSocketMessage(event) {
+    try {
+      const message = JSON.parse(event.data);
+      console.log('OBS: Received message:', message.op, message.d?.eventType || message.d?.requestType);
+      
+      switch (message.op) {
+        case 0: // Hello
+          this.handleHello(message.d);
+          break;
+        case 2: // Identified
+          this.handleIdentified(message.d);
+          break;
+        case 5: // Event
+          this.handleOBSEvent(message.d);
+          break;
+        case 7: // RequestResponse
+          this.handleRequestResponse(message);
+          break;
+      }
+    } catch (error) {
+      console.error('Error handling WebSocket message:', error);
+    }
+  }
+
+  handleHello(data) {
+    console.log('OBS: Received Hello message');
+    
+    // Send Identify message
+    const identifyMessage = {
+      op: 1, // Identify
+      d: {
+        rpcVersion: 1,
+        eventSubscriptions: 2047 | 65536 // All events + high volume
+      }
+    };
+
+    // Add authentication if needed
+    if (data.authentication) {
+      // For now, skip authentication - will implement if password is set
+      console.log('OBS: Authentication required but not implemented in fallback');
+    }
+
+    console.log('OBS: Sending Identify message');
+    this.websocket.send(JSON.stringify(identifyMessage));
+  }
+
+  handleIdentified(data) {
+    console.log('OBS: Successfully identified!');
+    this.isConnected = true;
+    this.isIdentified = true;
+    this.reconnectAttempts = 0;
+    this.clearReconnectInterval();
+    this.emit('ConnectionOpened');
+  }
+
+  handleOBSEvent(eventData) {
+    const eventType = eventData.eventType;
+    console.log('OBS: Event received:', eventType);
+    
+    switch (eventType) {
+      case 'InputVolumeMeters':
+        this.emit('InputVolumeMeters', eventData.eventData);
+        break;
+      case 'InputVolumeChanged':
+        this.emit('InputVolumeChanged', eventData.eventData);
+        break;
+      case 'InputMuteStateChanged':
+        this.emit('InputMuteStateChanged', eventData.eventData);
+        break;
+      case 'InputCreated':
+        this.emit('InputCreated', eventData.eventData);
+        break;
+      case 'InputRemoved':
+        this.emit('InputRemoved', eventData.eventData);
+        break;
+      case 'CurrentProgramSceneChanged':
+        this.emit('CurrentProgramSceneChanged', eventData.eventData);
+        break;
+      case 'SceneCreated':
+        this.emit('SceneCreated', eventData.eventData);
+        break;
+      case 'SceneRemoved':
+        this.emit('SceneRemoved', eventData.eventData);
+        break;
+    }
+  }
+
+  handleRequestResponse(message) {
+    const requestId = message.d.requestId;
+    const request = this.pendingRequests.get(requestId);
+    
+    if (request) {
+      this.pendingRequests.delete(requestId);
+      
+      if (message.d.requestStatus.result) {
+        console.log('OBS: Request successful:', message.d.requestStatus.code);
+        request.resolve(message.d.responseData || {});
+      } else {
+        console.error('OBS: Request failed:', message.d.requestStatus.comment || 'Unknown error');
+        request.reject(new Error(message.d.requestStatus.comment || 'Request failed'));
+      }
+    }
+  }
+
+  async fallbackCall(requestType, requestData = {}) {
+    if (!this.isIdentified) {
+      throw new Error('OBS WebSocket not identified');
+    }
+
+    return new Promise((resolve, reject) => {
+      const requestId = `req_${this.messageId++}`;
+      
+      const message = {
+        op: 6, // Request
+        d: {
+          requestType,
+          requestId,
+          requestData
+        }
+      };
+
+      console.log('OBS: Sending request:', requestType, requestData);
+      this.pendingRequests.set(requestId, { resolve, reject });
+      
+      this.websocket.send(JSON.stringify(message));
+      
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        if (this.pendingRequests.has(requestId)) {
+          this.pendingRequests.delete(requestId);
+          reject(new Error('Request timeout'));
+        }
+      }, 10000);
+    });
+  }
+
+  fallbackDisconnect() {
+    if (this.websocket) {
+      this.websocket.close();
+      this.websocket = null;
+    }
+    this.pendingRequests?.clear();
+    this.isConnected = false;
+    this.isIdentified = false;
   }
 
   setupEventHandlers() {
+    if (!this.obs) return;
+
     // Connection events
     this.obs.on('ConnectionOpened', () => {
       console.log('OBS WebSocket connected');
       this.isConnected = true;
       this.isConnecting = false;
+      this.isIdentified = true; // For library version
       this.reconnectAttempts = 0;
       this.clearReconnectInterval();
       this.emit('connected');
@@ -29,6 +267,7 @@ class OBSWebSocketManager {
       console.log('OBS WebSocket disconnected');
       this.isConnected = false;
       this.isConnecting = false;
+      this.isIdentified = false;
       this.emit('disconnected');
       this.startReconnectTimer();
     });
@@ -37,6 +276,7 @@ class OBSWebSocketManager {
       console.error('OBS WebSocket connection error:', error);
       this.isConnected = false;
       this.isConnecting = false;
+      this.isIdentified = false;
       this.emit('error', error);
       this.startReconnectTimer();
     });
@@ -62,10 +302,16 @@ class OBSWebSocketManager {
     this.obs.on('InputRemoved', (data) => {
       this.handleInputRemoved(data);
     });
+
+    // Scene events
+    this.obs.on('CurrentProgramSceneChanged', (data) => {
+      this.handleSceneChanged(data);
+    });
   }
 
-  async connect(url = 'ws://localhost:4455', password = '') {
+  async connect(url = 'ws://localhost:4455', password = '', options = {}) {
     if (this.isConnected || this.isConnecting) {
+      console.log('OBS: Already connected or connecting');
       return;
     }
 
@@ -73,21 +319,28 @@ class OBSWebSocketManager {
     this.emit('connecting');
 
     try {
-      await this.obs.connect(url, password, {
-        eventSubscriptions: 
-          2047 | // All regular events  
-          65536, // InputVolumeMeters high-volume event
-        rpcVersion: 1
-      });
+      const connectOptions = {
+        eventSubscriptions: 2047 | 65536, // All regular events + InputVolumeMeters
+        rpcVersion: 1,
+        ...options
+      };
+
+      if (this.obs && typeof this.obs.connect === 'function') {
+        await this.obs.connect(url, password, connectOptions);
+        console.log('OBS: Connected successfully');
+      } else {
+        throw new Error('OBS WebSocket not properly initialized');
+      }
     } catch (error) {
       this.isConnecting = false;
+      console.error('OBS: Connection failed:', error);
       throw error;
     }
   }
 
   disconnect() {
     this.clearReconnectInterval();
-    if (this.isConnected) {
+    if (this.obs && this.isConnected) {
       this.obs.disconnect();
     }
   }
@@ -99,17 +352,17 @@ class OBSWebSocketManager {
 
     this.reconnectInterval = setTimeout(() => {
       this.reconnectAttempts++;
-      console.log(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+      console.log(`OBS: Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
       
       const settings = window.settingsManager?.getObsSettings() || {};
-      if (settings.autoConnect) {
+      if (settings.autoConnect !== false) {
         this.connect(settings.url, settings.password).catch(error => {
-          console.error('Reconnection failed:', error);
+          console.error('OBS: Reconnection failed:', error);
         });
       }
       
       this.reconnectInterval = null;
-    }, Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)); // Exponential backoff, max 30s
+    }, Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000));
   }
 
   clearReconnectInterval() {
@@ -121,26 +374,33 @@ class OBSWebSocketManager {
 
   // Audio source management
   async getAudioSources() {
-    if (!this.isConnected) {
-      throw new Error('Not connected to OBS');
+    if (!this.isIdentified) {
+      throw new Error('OBS WebSocket not identified');
     }
 
     try {
-      const { inputs } = await this.obs.call('GetInputList');
+      console.log('OBS: Getting input list...');
+      const response = await this.obs.call('GetInputList');
+      const inputs = response.inputs || [];
       
+      console.log('OBS: Received inputs:', inputs.length);
+
       // Filter for audio sources
       const audioInputs = inputs.filter(input => {
-        return input.inputKind && (
-          input.inputKind.includes('audio') ||
-          input.inputKind === 'wasapi_input_capture' ||
-          input.inputKind === 'wasapi_output_capture' ||
-          input.inputKind === 'pulse_input_capture' ||
-          input.inputKind === 'pulse_output_capture' ||
-          input.inputKind === 'alsa_input_capture' ||
-          input.inputKind === 'coreaudio_input_capture' ||
-          input.inputKind === 'coreaudio_output_capture'
+        const kind = input.inputKind;
+        return kind && (
+          kind.includes('audio') ||
+          kind === 'wasapi_input_capture' ||
+          kind === 'wasapi_output_capture' ||
+          kind === 'pulse_input_capture' ||
+          kind === 'pulse_output_capture' ||
+          kind === 'alsa_input_capture' ||
+          kind === 'coreaudio_input_capture' ||
+          kind === 'coreaudio_output_capture'
         );
       });
+
+      console.log('OBS: Found audio inputs:', audioInputs.length);
 
       // Update internal sources map
       this.audioSources.clear();
@@ -165,6 +425,8 @@ class OBSWebSocketManager {
             inputName: input.inputName
           });
           sourceInfo.muted = muteInfo.inputMuted;
+          
+          console.log('OBS: Got volume/mute info for', input.inputName);
         } catch (error) {
           console.warn(`Could not get volume/mute info for ${input.inputName}:`, error);
         }
@@ -180,9 +442,56 @@ class OBSWebSocketManager {
     }
   }
 
+  // Scene management
+  async getScenes() {
+    if (!this.isIdentified) {
+      throw new Error('OBS WebSocket not identified');
+    }
+
+    try {
+      console.log('OBS: Getting scene list...');
+      const response = await this.obs.call('GetSceneList');
+      const scenes = response.scenes || [];
+      
+      console.log('OBS: Found scenes:', scenes.length);
+
+      // Update internal scenes map
+      this.scenes.clear();
+      scenes.forEach(scene => {
+        this.scenes.set(scene.sceneName, {
+          name: scene.sceneName,
+          index: scene.sceneIndex
+        });
+      });
+
+      this.emit('scenesUpdated', Array.from(this.scenes.values()));
+      return Array.from(this.scenes.values());
+    } catch (error) {
+      console.error('Error getting scenes:', error);
+      throw error;
+    }
+  }
+
+  async setCurrentScene(sceneName) {
+    if (!this.isIdentified) {
+      throw new Error('OBS WebSocket not identified');
+    }
+
+    try {
+      console.log('OBS: Setting current scene to:', sceneName);
+      await this.obs.call('SetCurrentProgramScene', {
+        sceneName: sceneName
+      });
+      return true;
+    } catch (error) {
+      console.error(`Error setting scene to ${sceneName}:`, error);
+      throw error;
+    }
+  }
+
   async setInputVolume(inputName, volume) {
-    if (!this.isConnected) {
-      throw new Error('Not connected to OBS');
+    if (!this.isIdentified) {
+      throw new Error('OBS WebSocket not identified');
     }
 
     try {
@@ -191,7 +500,6 @@ class OBSWebSocketManager {
         inputVolumeMul: Math.max(0, Math.min(20, volume))
       });
       
-      // Update local cache
       if (this.audioSources.has(inputName)) {
         this.audioSources.get(inputName).volume = volume;
       }
@@ -204,8 +512,8 @@ class OBSWebSocketManager {
   }
 
   async setInputMute(inputName, muted) {
-    if (!this.isConnected) {
-      throw new Error('Not connected to OBS');
+    if (!this.isIdentified) {
+      throw new Error('OBS WebSocket not identified');
     }
 
     try {
@@ -214,7 +522,6 @@ class OBSWebSocketManager {
         inputMuted: muted
       });
       
-      // Update local cache
       if (this.audioSources.has(inputName)) {
         this.audioSources.get(inputName).muted = muted;
       }
@@ -227,8 +534,8 @@ class OBSWebSocketManager {
   }
 
   async toggleInputMute(inputName) {
-    if (!this.isConnected) {
-      throw new Error('Not connected to OBS');
+    if (!this.isIdentified) {
+      throw new Error('OBS WebSocket not identified');
     }
 
     try {
@@ -236,7 +543,6 @@ class OBSWebSocketManager {
         inputName
       });
       
-      // Update local cache
       if (this.audioSources.has(inputName)) {
         this.audioSources.get(inputName).muted = result.inputMuted;
       }
@@ -279,7 +585,6 @@ class OBSWebSocketManager {
 
   handleInputCreated(data) {
     console.log('Input created:', data.inputName);
-    // Refresh audio sources when new input is created
     setTimeout(() => {
       this.getAudioSources().catch(console.error);
     }, 100);
@@ -289,6 +594,11 @@ class OBSWebSocketManager {
     console.log('Input removed:', data.inputName);
     this.audioSources.delete(data.inputName);
     this.emit('audioSourceRemoved', data.inputName);
+  }
+
+  handleSceneChanged(data) {
+    console.log('Scene changed to:', data.sceneName);
+    this.emit('sceneChanged', data.sceneName);
   }
 
   // Event emitter methods
@@ -326,6 +636,7 @@ class OBSWebSocketManager {
     return {
       connected: this.isConnected,
       connecting: this.isConnecting,
+      identified: this.isIdentified,
       reconnectAttempts: this.reconnectAttempts
     };
   }
@@ -337,11 +648,19 @@ class OBSWebSocketManager {
   getAllAudioSources() {
     return Array.from(this.audioSources.values());
   }
+
+  getAllScenes() {
+    return Array.from(this.scenes.values());
+  }
+
+  destroy() {
+    this.disconnect();
+    this.audioSources.clear();
+    this.scenes.clear();
+    this.listeners.clear();
+  }
 }
 
-// Export singleton instance
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = new OBSWebSocketManager();
-} else {
-  window.obsManager = new OBSWebSocketManager();
-}
+// Export as global variable
+console.log('Creating OBS WebSocket Manager...');
+window.obsManager = new OBSWebSocketManager();

@@ -1,5 +1,4 @@
-const { WebMidi } = require('webmidi');
-
+// Enhanced MIDI Controller with Scene Support and Learning
 class MidiController {
   constructor() {
     this.isEnabled = false;
@@ -8,68 +7,94 @@ class MidiController {
     this.listeners = new Map();
     this.isLearning = false;
     this.learningCallback = null;
+    this.learningTimeout = null;
     this.controllerMappings = new Map();
-    this.lastValues = new Map(); // Cache for controller values to detect changes
+    this.lastValues = new Map();
+    this.sceneMappings = new Map(); // Separate mappings for scenes
 
-    this.initializeMidi();
+    console.log('MidiController: Constructor called');
+    
+    // Initialize after a short delay to ensure WebMIDI API is available
+    setTimeout(() => this.initializeMidi(), 100);
   }
 
   async initializeMidi() {
     try {
-      await WebMidi.enable();
-      console.log('WebMidi enabled successfully');
+      // Check if Web MIDI API is available
+      if (!navigator.requestMIDIAccess) {
+        throw new Error('Web MIDI API not supported in this browser');
+      }
+
+      console.log('MIDI: Requesting MIDI access...');
+      const midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+      
+      this.midiAccess = midiAccess;
       this.isEnabled = true;
+      
+      console.log('MIDI: Access granted successfully');
       this.scanDevices();
       this.setupDeviceEvents();
       this.emit('enabled');
     } catch (error) {
-      console.error('Error enabling WebMidi:', error);
+      console.error('Error enabling MIDI:', error);
       this.emit('error', error);
     }
   }
 
   setupDeviceEvents() {
-    // Listen for device connections
-    WebMidi.addListener('connected', (event) => {
-      console.log('MIDI device connected:', event.port.name);
-      this.scanDevices();
-    });
+    if (!this.midiAccess) return;
 
-    WebMidi.addListener('disconnected', (event) => {
-      console.log('MIDI device disconnected:', event.port.name);
-      this.connectedDevices.delete(event.port.id);
+    // Listen for device connections/disconnections
+    this.midiAccess.onstatechange = (event) => {
+      console.log('MIDI: Device state changed:', event.port.name, event.port.state);
       
-      if (this.activeDevice && this.activeDevice.id === event.port.id) {
-        this.activeDevice = null;
-        this.emit('deviceDisconnected');
+      if (event.port.state === 'connected') {
+        console.log('MIDI: Device connected:', event.port.name);
+        this.scanDevices();
+      } else if (event.port.state === 'disconnected') {
+        console.log('MIDI: Device disconnected:', event.port.name);
+        this.connectedDevices.delete(event.port.id);
+        
+        if (this.activeDevice && this.activeDevice.id === event.port.id) {
+          this.activeDevice = null;
+          this.emit('deviceDisconnected');
+        }
+        
+        this.scanDevices();
       }
-      
-      this.scanDevices();
-    });
+    };
   }
 
   scanDevices() {
+    if (!this.midiAccess) {
+      console.warn('MIDI: Access not available for device scan');
+      return [];
+    }
+
     const devices = [];
     
-    // Input devices
-    WebMidi.inputs.forEach(input => {
-      const deviceInfo = {
-        id: input.id,
-        name: input.name,
-        manufacturer: input.manufacturer,
-        type: 'input',
-        connected: input.state === 'connected'
-      };
-      
-      devices.push(deviceInfo);
-      this.connectedDevices.set(input.id, deviceInfo);
-    });
+    // Scan input devices
+    for (const input of this.midiAccess.inputs.values()) {
+      if (input.state === 'connected') {
+        const deviceInfo = {
+          id: input.id,
+          name: input.name,
+          manufacturer: input.manufacturer || 'Unknown',
+          type: 'input',
+          connected: true
+        };
+        
+        devices.push(deviceInfo);
+        this.connectedDevices.set(input.id, deviceInfo);
+      }
+    }
 
-    console.log('Available MIDI devices:', devices);
+    console.log('MIDI: Available devices:', devices);
     this.emit('devicesUpdated', devices);
     
     // Auto-connect to first available device if none selected
     if (!this.activeDevice && devices.length > 0) {
+      console.log('MIDI: Auto-connecting to first device:', devices[0].name);
       this.connectToDevice(devices[0].id);
     }
 
@@ -77,8 +102,13 @@ class MidiController {
   }
 
   connectToDevice(deviceId) {
+    if (!this.midiAccess) {
+      console.error('MIDI: Access not available');
+      return false;
+    }
+
     try {
-      const input = WebMidi.getInputById(deviceId);
+      const input = this.midiAccess.inputs.get(deviceId);
       if (!input) {
         throw new Error(`MIDI device with ID ${deviceId} not found`);
       }
@@ -97,12 +127,12 @@ class MidiController {
       // Set up MIDI message listeners
       this.setupMidiListeners(input);
 
-      console.log(`Connected to MIDI device: ${input.name}`);
+      console.log(`MIDI: Connected to device: ${input.name}`);
       this.emit('deviceConnected', this.activeDevice);
       
       return true;
     } catch (error) {
-      console.error('Error connecting to MIDI device:', error);
+      console.error('MIDI: Error connecting to device:', error);
       this.emit('error', error);
       return false;
     }
@@ -110,8 +140,8 @@ class MidiController {
 
   disconnectFromDevice() {
     if (this.activeDevice && this.activeDevice.input) {
-      // Remove all listeners
-      this.activeDevice.input.removeListener();
+      // Remove listeners
+      this.activeDevice.input.onmidimessage = null;
       this.activeDevice = null;
       this.controllerMappings.clear();
       this.lastValues.clear();
@@ -120,155 +150,158 @@ class MidiController {
   }
 
   setupMidiListeners(input) {
-    // Control Change messages (knobs, faders, etc.)
-    input.addListener('controlchange', (event) => {
-      this.handleControlChange(event);
-    });
-
-    // Note On messages (buttons pressed)
-    input.addListener('noteon', (event) => {
-      this.handleNoteOn(event);
-    });
-
-    // Note Off messages (buttons released)  
-    input.addListener('noteoff', (event) => {
-      this.handleNoteOff(event);
-    });
-
-    // Program Change messages
-    input.addListener('programchange', (event) => {
-      this.handleProgramChange(event);
-    });
-
-    // Pitch Bend messages
-    input.addListener('pitchbend', (event) => {
-      this.handlePitchBend(event);
-    });
+    input.onmidimessage = (event) => {
+      this.handleMidiMessage(event);
+    };
   }
 
-  handleControlChange(event) {
-    const controllerId = `cc_${event.controller.number}_${event.channel}`;
-    const value = event.value;
-    const normalizedValue = value / 127; // Normalize to 0-1
+  handleMidiMessage(event) {
+    const [status, data1, data2] = event.data;
+    const channel = (status & 0x0f) + 1; // MIDI channels are 1-16
+    const messageType = status & 0xf0;
 
-    // Store the last value for this controller
+    let midiEvent = null;
+
+    switch (messageType) {
+      case 0xb0: // Control Change
+        midiEvent = this.createControlChangeEvent(data1, data2, channel);
+        break;
+      case 0x90: // Note On
+        if (data2 > 0) { // Velocity > 0 means note on
+          midiEvent = this.createNoteOnEvent(data1, data2, channel);
+        } else { // Velocity = 0 means note off
+          midiEvent = this.createNoteOffEvent(data1, data2, channel);
+        }
+        break;
+      case 0x80: // Note Off
+        midiEvent = this.createNoteOffEvent(data1, data2, channel);
+        break;
+      case 0xc0: // Program Change
+        midiEvent = this.createProgramChangeEvent(data1, channel);
+        break;
+      case 0xe0: // Pitch Bend
+        const pitchValue = (data2 << 7) | data1;
+        midiEvent = this.createPitchBendEvent(pitchValue, channel);
+        break;
+    }
+
+    if (midiEvent) {
+      console.log('MIDI: Message received:', midiEvent.type, midiEvent.id);
+      
+      if (this.isLearning) {
+        this.handleLearningEvent(midiEvent);
+      } else {
+        this.handleMappedEvent(midiEvent);
+      }
+      this.emit('midiMessage', midiEvent);
+    }
+  }
+
+  createControlChangeEvent(controller, value, channel) {
+    const controllerId = `cc_${controller}_${channel}`;
+    const normalizedValue = value / 127;
+
     this.lastValues.set(controllerId, normalizedValue);
 
-    const midiEvent = {
+    return {
       type: 'controlchange',
       id: controllerId,
-      controller: event.controller.number,
-      channel: event.channel,
+      controller: controller,
+      channel: channel,
       value: value,
       normalizedValue: normalizedValue,
       timestamp: Date.now()
     };
-
-    if (this.isLearning) {
-      this.handleLearningEvent(midiEvent);
-    } else {
-      this.handleMappedEvent(midiEvent);
-    }
-
-    this.emit('midiMessage', midiEvent);
   }
 
-  handleNoteOn(event) {
-    const noteId = `note_${event.note.number}_${event.channel}`;
+  createNoteOnEvent(note, velocity, channel) {
+    const noteId = `note_${note}_${channel}`;
     
-    const midiEvent = {
+    return {
       type: 'noteon',
       id: noteId,
-      note: event.note.number,
-      channel: event.channel,
-      velocity: event.velocity,
-      normalizedVelocity: event.velocity / 127,
+      note: note,
+      channel: channel,
+      velocity: velocity,
+      normalizedVelocity: velocity / 127,
       timestamp: Date.now()
     };
-
-    if (this.isLearning) {
-      this.handleLearningEvent(midiEvent);
-    } else {
-      this.handleMappedEvent(midiEvent);
-    }
-
-    this.emit('midiMessage', midiEvent);
   }
 
-  handleNoteOff(event) {
-    const noteId = `note_${event.note.number}_${event.channel}`;
+  createNoteOffEvent(note, velocity, channel) {
+    const noteId = `note_${note}_${channel}`;
     
-    const midiEvent = {
+    return {
       type: 'noteoff',
       id: noteId,
-      note: event.note.number,
-      channel: event.channel,
-      velocity: event.velocity,
+      note: note,
+      channel: channel,
+      velocity: velocity,
       timestamp: Date.now()
     };
-
-    this.emit('midiMessage', midiEvent);
   }
 
-  handleProgramChange(event) {
-    const programId = `program_${event.channel}`;
+  createProgramChangeEvent(program, channel) {
+    const programId = `program_${channel}`;
     
-    const midiEvent = {
+    return {
       type: 'programchange',
       id: programId,
-      value: event.value,
-      channel: event.channel,
+      value: program,
+      channel: channel,
       timestamp: Date.now()
     };
-
-    if (this.isLearning) {
-      this.handleLearningEvent(midiEvent);
-    } else {
-      this.handleMappedEvent(midiEvent);
-    }
-
-    this.emit('midiMessage', midiEvent);
   }
 
-  handlePitchBend(event) {
-    const pitchId = `pitch_${event.channel}`;
-    const normalizedValue = (event.value + 8192) / 16383; // Normalize pitch bend to 0-1
+  createPitchBendEvent(value, channel) {
+    const pitchId = `pitch_${channel}`;
+    const normalizedValue = value / 16383;
     
-    const midiEvent = {
+    return {
       type: 'pitchbend',
       id: pitchId,
-      value: event.value,
+      value: value,
       normalizedValue: normalizedValue,
-      channel: event.channel,
+      channel: channel,
       timestamp: Date.now()
     };
-
-    if (this.isLearning) {
-      this.handleLearningEvent(midiEvent);
-    } else {
-      this.handleMappedEvent(midiEvent);
-    }
-
-    this.emit('midiMessage', midiEvent);
   }
 
   // MIDI Learning
-  startLearning(callback) {
+  startLearning(callback, timeout = 10000) {
+    if (this.isLearning) {
+      this.stopLearning();
+    }
+
     this.isLearning = true;
     this.learningCallback = callback;
+    
+    // Set timeout for learning
+    this.learningTimeout = setTimeout(() => {
+      console.log('MIDI: Learning timeout');
+      this.stopLearning();
+    }, timeout);
+
     this.emit('learningStarted');
-    console.log('MIDI learning started - move a control on your MIDI device');
+    console.log('MIDI: Learning started - press any control on your MIDI device');
   }
 
   stopLearning() {
     this.isLearning = false;
     this.learningCallback = null;
+    
+    if (this.learningTimeout) {
+      clearTimeout(this.learningTimeout);
+      this.learningTimeout = null;
+    }
+    
     this.emit('learningStopped');
-    console.log('MIDI learning stopped');
+    console.log('MIDI: Learning stopped');
   }
 
   handleLearningEvent(midiEvent) {
     if (this.learningCallback) {
+      console.log('MIDI: Learning captured event:', midiEvent);
       this.learningCallback(midiEvent);
       this.stopLearning();
     }
@@ -276,6 +309,7 @@ class MidiController {
 
   // Control Mapping
   mapControl(midiId, action) {
+    console.log('MIDI: Mapping control:', midiId, 'to action:', action);
     this.controllerMappings.set(midiId, action);
     
     // Save to settings
@@ -284,7 +318,7 @@ class MidiController {
     }
     
     this.emit('mappingAdded', { midiId, action });
-    console.log(`MIDI control mapped: ${midiId} -> ${action.type}`);
+    console.log(`MIDI: Control mapped: ${midiId} -> ${action.type}`);
   }
 
   removeMapping(midiId) {
@@ -296,12 +330,14 @@ class MidiController {
     }
     
     this.emit('mappingRemoved', midiId);
-    console.log(`MIDI mapping removed: ${midiId}`);
+    console.log(`MIDI: Mapping removed: ${midiId}`);
   }
 
   handleMappedEvent(midiEvent) {
     const mapping = this.controllerMappings.get(midiEvent.id);
     if (!mapping) return;
+
+    console.log('MIDI: Executing mapped action:', mapping.type, 'for', midiEvent.id);
 
     try {
       switch (mapping.type) {
@@ -315,31 +351,61 @@ class MidiController {
           this.handleSceneControl(midiEvent, mapping);
           break;
         default:
-          console.warn('Unknown mapping type:', mapping.type);
+          console.warn('MIDI: Unknown mapping type:', mapping.type);
       }
     } catch (error) {
-      console.error('Error handling mapped MIDI event:', error);
+      console.error('MIDI: Error handling mapped event:', error);
     }
   }
 
   handleVolumeControl(midiEvent, mapping) {
     if (midiEvent.type === 'controlchange' && window.obsManager) {
       const volume = midiEvent.normalizedValue * (mapping.maxVolume || 1.0);
+      console.log('MIDI: Setting volume for', mapping.sourceName, 'to', volume);
       window.obsManager.setInputVolume(mapping.sourceName, volume)
-        .catch(error => console.error('Error setting volume:', error));
+        .then(() => console.log('MIDI: Volume set successfully'))
+        .catch(error => console.error('MIDI: Error setting volume:', error));
     }
   }
 
   handleMuteControl(midiEvent, mapping) {
     if (midiEvent.type === 'noteon' && window.obsManager) {
+      console.log('MIDI: Toggling mute for', mapping.sourceName);
       window.obsManager.toggleInputMute(mapping.sourceName)
-        .catch(error => console.error('Error toggling mute:', error));
+        .then(() => console.log('MIDI: Mute toggled successfully'))
+        .catch(error => console.error('MIDI: Error toggling mute:', error));
     }
   }
 
   handleSceneControl(midiEvent, mapping) {
-    // Implementation for scene switching would go here
-    console.log('Scene control not yet implemented');
+    if (midiEvent.type === 'noteon' && window.obsManager) {
+      console.log('MIDI: Switching to scene:', mapping.sceneName);
+      window.obsManager.setCurrentScene(mapping.sceneName)
+        .then(() => console.log('MIDI: Scene switched successfully'))
+        .catch(error => console.error('MIDI: Error switching scene:', error));
+    }
+  }
+
+  // Scene mapping methods
+  mapSceneControl(midiEvent, sceneName) {
+    const mapping = {
+      midiId: midiEvent.id,
+      sceneName: sceneName,
+      type: 'scene',
+      midiDescription: this.getMidiEventDescription(midiEvent)
+    };
+
+    const action = {
+      type: 'scene',
+      sceneName: sceneName
+    };
+
+    this.mapControl(midiEvent.id, action);
+    
+    // Also store in scene mappings for UI
+    this.sceneMappings.set(midiEvent.id, mapping);
+    
+    return mapping;
   }
 
   // Load mappings from settings
@@ -348,8 +414,18 @@ class MidiController {
       const mappings = window.settingsManager.getMidiMappings();
       Object.entries(mappings).forEach(([midiId, action]) => {
         this.controllerMappings.set(midiId, action);
+        
+        // If it's a scene mapping, also add to scene mappings
+        if (action.type === 'scene') {
+          this.sceneMappings.set(midiId, {
+            midiId: midiId,
+            sceneName: action.sceneName,
+            type: 'scene',
+            midiDescription: this.getMidiEventDescription({ id: midiId })
+          });
+        }
       });
-      console.log(`Loaded ${Object.keys(mappings).length} MIDI mappings`);
+      console.log(`MIDI: Loaded ${Object.keys(mappings).length} mappings`);
     }
   }
 
@@ -369,18 +445,34 @@ class MidiController {
     }));
   }
 
+  getSceneMappings() {
+    return Array.from(this.sceneMappings.values());
+  }
+
   getMidiEventDescription(midiEvent) {
-    switch (midiEvent.type) {
+    const parts = midiEvent.id ? midiEvent.id.split('_') : [];
+    
+    switch (parts[0] || midiEvent.type) {
+      case 'cc':
       case 'controlchange':
-        return `Controller ${midiEvent.controller} (Channel ${midiEvent.channel})`;
+        const controller = parts[1] || midiEvent.controller;
+        const channel = parts[2] || midiEvent.channel;
+        return `Controller ${controller} (Ch ${channel})`;
+      case 'note':
       case 'noteon':
-        return `Note ${midiEvent.note} (Channel ${midiEvent.channel})`;
+        const note = parts[1] || midiEvent.note;
+        const noteChannel = parts[2] || midiEvent.channel;
+        return `Note ${note} (Ch ${noteChannel})`;
+      case 'program':
       case 'programchange':
-        return `Program Change (Channel ${midiEvent.channel})`;
+        const progChannel = parts[1] || midiEvent.channel;
+        return `Program Change (Ch ${progChannel})`;
+      case 'pitch':
       case 'pitchbend':
-        return `Pitch Bend (Channel ${midiEvent.channel})`;
+        const pitchChannel = parts[1] || midiEvent.channel;
+        return `Pitch Bend (Ch ${pitchChannel})`;
       default:
-        return `${midiEvent.type} (Channel ${midiEvent.channel})`;
+        return `${midiEvent.type || 'Unknown'} (${midiEvent.id || 'No ID'})`;
     }
   }
 
@@ -416,20 +508,16 @@ class MidiController {
 
   // Cleanup
   destroy() {
+    this.stopLearning();
     this.disconnectFromDevice();
     this.listeners.clear();
     this.controllerMappings.clear();
+    this.sceneMappings.clear();
     this.lastValues.clear();
-    
-    if (this.isEnabled) {
-      WebMidi.disable();
-    }
+    this.isEnabled = false;
   }
 }
 
-// Export singleton instance
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = new MidiController();
-} else {
-  window.midiController = new MidiController();
-}
+// Export as global variable
+console.log('Creating MIDI Controller...');
+window.midiController = new MidiController();
