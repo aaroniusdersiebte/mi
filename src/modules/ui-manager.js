@@ -1,4 +1,4 @@
-// Enhanced UI Manager with Scene Support and Hotkey Creation
+// Enhanced UI Manager with Scene Support, Auto-Close Dialogs and Drag & Drop
 class UIManager {
   constructor() {
     this.elements = {};
@@ -8,6 +8,8 @@ class UIManager {
     this.learningTarget = null;
     this.learningType = null; // 'audio' or 'scene'
     this.availableScenes = [];
+    this.learningOverlay = null;
+    this.sortable = null; // For drag & drop
 
     console.log('UIManager: Constructor called');
     
@@ -234,7 +236,7 @@ class UIManager {
       window.midiController.on('deviceDisconnected', () => {
         console.log('UIManager: MIDI device disconnected');
         setTimeout(() => this.updateConnectionStatus(), 100);
-        this.addMidiLogEntry('Device Disconnected', 'Device removed');
+        this.addMidiLogEntry('Device Disconnected', 'Device removed or went to standby');
       });
       window.midiController.on('devicesUpdated', (devices) => {
         console.log('UIManager: MIDI devices updated:', devices);
@@ -268,6 +270,7 @@ class UIManager {
     }
   }
 
+  // MIDI Learning with Auto-Close Fix
   startAudioMidiAssignment(sourceName) {
     this.learningTarget = sourceName;
     this.learningType = 'audio';
@@ -314,10 +317,14 @@ class UIManager {
     }
   }
 
+  // FIXED: Auto-close dialogs after successful assignment
   assignMidiToAudioSource(sourceName, midiEvent) {
     const controlType = midiEvent.type === 'controlchange' ? 'volume' : 'mute';
     window.audioManager?.assignMidiControl(sourceName, midiEvent, controlType);
     this.showSuccessMessage(`MIDI-Steuerung für "${sourceName}" erstellt!`);
+    
+    // Auto-close dialog
+    this.closeMidiLearningDialog();
   }
 
   assignMidiToScene(sceneName, midiEvent) {
@@ -325,7 +332,32 @@ class UIManager {
       window.midiController.mapSceneControl(midiEvent, sceneName);
       this.showSuccessMessage(`Scene-Hotkey für "${sceneName}" erstellt!`);
       this.updateSceneMappingsDisplay();
+      
+      // Auto-close dialog
+      this.closeMidiLearningDialog();
     }
+  }
+
+  // FIXED: Proper dialog closing
+  closeMidiLearningDialog() {
+    // Remove learning overlay
+    if (this.learningOverlay && this.learningOverlay.parentNode) {
+      this.learningOverlay.remove();
+      this.learningOverlay = null;
+    }
+    
+    // Remove any mapping dialogs
+    const mappingDialogs = document.querySelectorAll('.midi-learning-modal');
+    mappingDialogs.forEach(dialog => {
+      if (dialog.parentNode) {
+        dialog.remove();
+      }
+    });
+    
+    // Reset learning state
+    this.stopMidiLearning();
+    
+    console.log('UIManager: MIDI learning dialog closed');
   }
 
   updateSceneMappingsDisplay() {
@@ -499,11 +531,26 @@ class UIManager {
     console.log('UIManager: Scene buttons updated, found', this.availableScenes.length, 'scenes');
   }
 
-  // Audio sources management
+  // ENHANCED: Audio sources management with Drag & Drop
   updateAudioSources(sources) {
     if (!this.elements.audioSources) return;
 
     console.log('UIManager: Updating audio sources display:', sources.length);
+
+    // Load saved order
+    const savedOrder = window.settingsManager?.get('ui.audioSourceOrder', []);
+    
+    // Sort sources by saved order
+    if (savedOrder.length > 0) {
+      sources.sort((a, b) => {
+        const aIndex = savedOrder.indexOf(a.name);
+        const bIndex = savedOrder.indexOf(b.name);
+        if (aIndex === -1 && bIndex === -1) return 0;
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
+      });
+    }
 
     // Clear existing content
     this.elements.audioSources.innerHTML = '';
@@ -513,15 +560,19 @@ class UIManager {
       return;
     }
 
-    // Create source elements
+    // Create source elements with drag handles
     sources.forEach(source => {
       const sourceElement = this.createAudioSourceElement(source);
       this.elements.audioSources.appendChild(sourceElement);
     });
 
+    // Initialize drag and drop after elements are added
+    setTimeout(() => this.initializeDragAndDrop(), 100);
+
     console.log('UIManager: Audio sources display updated');
   }
 
+  // ENHANCED: Audio source element with drag handle
   createAudioSourceElement(source) {
     const sourceDiv = document.createElement('div');
     sourceDiv.className = 'audio-source';
@@ -529,6 +580,7 @@ class UIManager {
     
     sourceDiv.innerHTML = `
       <div class="source-header">
+        <div class="drag-handle" title="Zum Sortieren ziehen">⋮⋮</div>
         <span class="source-name">${source.name}</span>
         <span class="source-level">-∞ dB</span>
       </div>
@@ -563,6 +615,72 @@ class UIManager {
     return sourceDiv;
   }
 
+  // NEW: Initialize Drag & Drop with SortableJS
+  initializeDragAndDrop() {
+    // Only initialize if SortableJS is available and we have audio sources
+    if (this.elements.audioSources && typeof Sortable !== 'undefined' && this.elements.audioSources.children.length > 1) {
+      
+      // Destroy existing sortable instance
+      if (this.sortable) {
+        this.sortable.destroy();
+      }
+
+      this.sortable = Sortable.create(this.elements.audioSources, {
+        animation: 150,
+        handle: '.drag-handle', // Only drag by the handle
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        dragClass: 'sortable-drag',
+        
+        // When dragging starts
+        onStart: (evt) => {
+          console.log('Drag started:', evt.item.dataset.sourceName);
+          document.body.classList.add('dragging-audio-source');
+        },
+        
+        // When dragging ends
+        onEnd: (evt) => {
+          console.log('Drag ended:', evt.item.dataset.sourceName);
+          document.body.classList.remove('dragging-audio-source');
+          
+          // Save new order
+          const sourceNames = Array.from(this.elements.audioSources.children)
+            .filter(el => el.dataset.sourceName) // Only elements with source names
+            .map(el => el.dataset.sourceName);
+          
+          console.log('Audio sources reordered:', sourceNames);
+          
+          // Save order to settings
+          window.settingsManager?.set('ui.audioSourceOrder', sourceNames);
+          
+          // Show success message
+          this.showSuccessMessage('Audio-Quellen Reihenfolge gespeichert!');
+        },
+        
+        // Show drop preview
+        onMove: (evt) => {
+          this.showDropPreview(evt);
+        }
+      });
+      
+      console.log('UIManager: Drag & Drop initialized for audio sources');
+    }
+  }
+
+  // NEW: Show drop preview during dragging
+  showDropPreview(evt) {
+    const target = evt.related;
+    if (target && target.classList.contains('audio-source')) {
+      // Add temporary visual indicator
+      target.style.borderTop = '2px solid var(--accent-orange)';
+      
+      // Remove after short delay
+      setTimeout(() => {
+        target.style.borderTop = '';
+      }, 200);
+    }
+  }
+
   setupAudioSourceListeners(element, source) {
     const volumeSlider = element.querySelector('.volume-slider');
     const muteBtn = element.querySelector('.mute-btn');
@@ -591,6 +709,7 @@ class UIManager {
     });
   }
 
+  // ENHANCED: Better audio level updates
   updateAudioLevels() {
     const audioSources = window.audioManager?.getAllAudioSources() || [];
     
@@ -600,25 +719,27 @@ class UIManager {
       );
       
       if (sourceElement) {
-        // Update level text
+        // Update level text with proper formatting
         const levelElement = sourceElement.querySelector('.source-level');
         if (levelElement) {
           levelElement.textContent = window.audioManager.formatVolumeLevel(source.levelMul);
         }
         
-        // Update visual level bar
+        // Update visual level bar - FIXED for OBS levels
         const levelBar = sourceElement.querySelector('.level-bar');
         const peakIndicator = sourceElement.querySelector('.peak-indicator');
         
-        if (levelBar) {
-          const levelPercent = Math.max(0, Math.min(100, (source.levelMul || 0) * 100));
+        if (levelBar && source.levelMul !== undefined) {
+          // OBS InputLevelsMul is already 0-1, convert to percentage
+          const levelPercent = Math.max(0, Math.min(100, source.levelMul * 100));
           levelBar.style.width = `${levelPercent}%`;
           levelBar.dataset.level = levelPercent.toFixed(0);
           
-          // Color based on level
-          if (levelPercent > 80) {
+          // Color based on dB level (more accurate)
+          const db = source.levelMul > 0 ? 20 * Math.log10(source.levelMul) : -100;
+          if (db > -10) {
             levelBar.className = 'level-bar level-high';
-          } else if (levelPercent > 60) {
+          } else if (db > -20) {
             levelBar.className = 'level-bar level-medium';
           } else {
             levelBar.className = 'level-bar level-low';
@@ -698,6 +819,7 @@ class UIManager {
     this.showMidiMappingDialog(midiEvent);
   }
 
+  // ENHANCED: MIDI mapping dialog with proper auto-close
   showMidiMappingDialog(midiEvent) {
     const description = window.midiController?.getMidiEventDescription(midiEvent);
     
@@ -713,15 +835,24 @@ class UIManager {
           <div class="scene-list" id="sceneList"></div>
         </div>
         <div class="dialog-buttons">
-          <button class="btn-secondary" onclick="this.closest('.midi-mapping-dialog').remove()">Abbrechen</button>
+          <button class="btn-secondary" onclick="window.uiManager.closeMidiLearningDialog()">Abbrechen</button>
         </div>
       </div>
     `;
     
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'modal-overlay midi-learning-modal';
     overlay.innerHTML = dialogHTML;
     document.body.appendChild(overlay);
+    
+    // ESC key support
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        this.closeMidiLearningDialog();
+        document.removeEventListener('keydown', handleEscape);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
     
     // Populate audio sources
     const audioSourceList = overlay.querySelector('#audioSourceList');
@@ -732,7 +863,7 @@ class UIManager {
       button.textContent = source.name;
       button.onclick = () => {
         this.assignMidiToAudioSource(source.name, midiEvent);
-        overlay.remove();
+        document.removeEventListener('keydown', handleEscape);
       };
       audioSourceList.appendChild(button);
     });
@@ -745,7 +876,7 @@ class UIManager {
       button.textContent = scene.name;
       button.onclick = () => {
         this.assignMidiToScene(scene.name, midiEvent);
-        overlay.remove();
+        document.removeEventListener('keydown', handleEscape);
       };
       sceneList.appendChild(button);
     });
@@ -753,12 +884,18 @@ class UIManager {
     // Close on outside click
     overlay.onclick = (e) => {
       if (e.target === overlay) {
-        overlay.remove();
+        this.closeMidiLearningDialog();
+        document.removeEventListener('keydown', handleEscape);
       }
     };
   }
 
   showMidiLearningOverlay(target = '') {
+    // Remove existing overlay
+    if (this.learningOverlay) {
+      this.learningOverlay.remove();
+    }
+
     const overlay = document.createElement('div');
     overlay.className = 'midi-learning-overlay';
     overlay.innerHTML = `
@@ -801,18 +938,13 @@ class UIManager {
     document.body.classList.remove('midi-learning');
   }
 
-  showMidiLearningSuccess(midiEvent) {
-    const description = window.midiController?.getMidiEventDescription(midiEvent);
-    this.showSuccessMessage(`MIDI-Kontrolle erkannt: ${description}`);
-  }
-
   updateMidiMappings() {
     const sources = window.audioManager?.getAllAudioSources() || [];
     this.updateAudioSources(sources);
     this.updateSceneMappingsDisplay();
   }
 
-  // Connection Modal
+  // Connection Modal methods
   openConnectionModal() {
     if (this.elements.connectionModal) {
       this.elements.connectionModal.style.display = 'flex';
@@ -886,7 +1018,7 @@ class UIManager {
     }
   }
 
-  // Debug Modal
+  // Debug Modal methods
   openDebugModal() {
     if (this.elements.debugModal) {
       this.elements.debugModal.style.display = 'flex';
@@ -1241,6 +1373,11 @@ class UIManager {
 
   // Cleanup
   destroy() {
+    // Destroy sortable instance
+    if (this.sortable) {
+      this.sortable.destroy();
+    }
+
     document.removeEventListener('mousemove', this.handleResize);
     document.removeEventListener('mouseup', this.stopResize);
     document.removeEventListener('keydown', this.handleKeyboard);

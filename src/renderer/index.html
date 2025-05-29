@@ -46,6 +46,7 @@
                     <div class="no-sources-message" id="noSourcesMessage">
                         <p>Keine Audio-Quellen gefunden</p>
                         <p class="help-text">Verbinde dich mit OBS und stelle sicher, dass Audio-Quellen vorhanden sind</p>
+                        <p class="help-text">🔗 Klicke auf "Verbindungen prüfen" um OBS zu verbinden</p>
                     </div>
                 </div>
             </section>
@@ -70,6 +71,7 @@
                         <p>Keine MIDI-Zuordnungen</p>
                         <p class="help-text">Drücke "MIDI Lernen" und betätige dein MIDI-Gerät</p>
                         <p class="help-text">Oder ordne Audio-Quellen und Szenen direkt zu</p>
+                        <p class="help-text">🎹 Launch Control XL: Aktiviere Low Power Mode für bessere Stabilität</p>
                     </div>
                     
                     <!-- Scene mappings will be added here dynamically -->
@@ -86,18 +88,21 @@
                 </div>
                 <div class="modal-body">
                     <div class="settings-group">
-                        <label>OBS WebSocket URL:</label>
+                        <label for="obsUrl">OBS WebSocket URL:</label>
                         <input type="text" id="obsUrl" placeholder="ws://localhost:4455">
+                        <small class="help-text">Standard: ws://localhost:4455</small>
                     </div>
                     <div class="settings-group">
-                        <label>OBS Passwort:</label>
+                        <label for="obsPassword">OBS Passwort:</label>
                         <input type="password" id="obsPassword" placeholder="Passwort (optional)">
+                        <small class="help-text">Leer lassen wenn kein Passwort gesetzt</small>
                     </div>
                     <div class="settings-group">
-                        <label>MIDI Gerät:</label>
+                        <label for="midiDevice">MIDI Gerät:</label>
                         <select id="midiDevice">
                             <option value="">Automatisch erkennen</option>
                         </select>
+                        <small class="help-text">Launch Control XL: Low Power Mode aktivieren für bessere Stabilität</small>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -116,25 +121,41 @@
                 </div>
                 <div class="modal-body">
                     <div class="connection-section">
-                        <h4>OBS Studio</h4>
+                        <h4>🎥 OBS Studio</h4>
                         <div class="connection-info" id="obsConnectionInfo">
                             <p>Status: <span id="obsConnectionStatus">Prüfe...</span></p>
                             <p>URL: <span id="obsConnectionUrl">ws://localhost:4455</span></p>
                             <p>Versuche: <span id="obsReconnectAttempts">0</span></p>
                         </div>
-                        <button class="btn-primary" id="connectObs">OBS Verbinden</button>
-                        <button class="btn-secondary" id="disconnectObs">Trennen</button>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn-primary" id="connectObs">OBS Verbinden</button>
+                            <button class="btn-secondary" id="disconnectObs">Trennen</button>
+                        </div>
                     </div>
                     
                     <div class="connection-section">
-                        <h4>MIDI Controller</h4>
+                        <h4>🎹 MIDI Controller</h4>
                         <div class="connection-info" id="midiConnectionInfo">
                             <p>Status: <span id="midiConnectionStatus">Prüfe...</span></p>
                             <p>Gerät: <span id="midiDeviceName">Kein Gerät</span></p>
                             <p>Verfügbare Geräte: <span id="midiDeviceCount">0</span></p>
                         </div>
-                        <button class="btn-primary" id="scanMidi">MIDI Scannen</button>
-                        <button class="btn-secondary" id="disconnectMidi">Trennen</button>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn-primary" id="scanMidi">MIDI Scannen</button>
+                            <button class="btn-secondary" id="disconnectMidi">Trennen</button>
+                        </div>
+                        
+                        <!-- Launch Control XL Help -->
+                        <div style="margin-top: 12px; padding: 12px; background: var(--tertiary-bg); border-radius: 6px; font-size: 12px;">
+                            <strong>🎛️ Launch Control XL Hilfe:</strong><br>
+                            <strong>Low Power Mode aktivieren:</strong><br>
+                            1. Halte "User" + "Factory Template" Buttons<br>
+                            2. USB-Kabel einstecken<br>
+                            3. Buttons loslassen<br>
+                            4. "Record Arm" drücken<br>
+                            5. Rechten Pfeil-Button drücken<br>
+                            <em>Verhindert automatisches Standby</em>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -152,18 +173,27 @@
                 </div>
                 <div class="modal-body">
                     <div class="debug-section">
-                        <h4>App Status</h4>
+                        <h4>📊 App Status</h4>
                         <pre id="debugAppStatus">Lade...</pre>
                     </div>
                     <div class="debug-section">
-                        <h4>MIDI Events (Live)</h4>
+                        <h4>🎹 MIDI Events (Live)</h4>
                         <div class="debug-log" id="midiEventLog">Keine Events...</div>
                         <button class="btn-secondary" id="clearMidiLog">Log löschen</button>
                     </div>
                     <div class="debug-section">
-                        <h4>OBS Events (Live)</h4>
+                        <h4>🎥 OBS Events (Live)</h4>
                         <div class="debug-log" id="obsEventLog">Keine Events...</div>
                         <button class="btn-secondary" id="clearObsLog">Log löschen</button>
+                    </div>
+                    <div class="debug-section">
+                        <h4>🔧 Fehlerbehebung</h4>
+                        <p style="font-size: 12px; color: var(--text-secondary);">
+                            <strong>Audio-Pegel zu niedrig:</strong> Volume-Conversion wurde korrigiert<br>
+                            <strong>MIDI-Gerät Standby:</strong> Low Power Mode aktivieren<br>
+                            <strong>Dialog schließt nicht:</strong> ESC-Taste oder erfolgreiche Zuordnung<br>
+                            <strong>Sortierung:</strong> An ⋮⋮ Symbol ziehen
+                        </p>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -180,7 +210,7 @@
                 <h3>MIDI Learning Aktiv</h3>
                 <p>Bewege einen Regler oder drücke einen Button auf deinem MIDI-Controller</p>
                 <div class="learning-target" id="learningTarget"></div>
-                <button class="btn-secondary" onclick="window.uiManager.stopMidiLearning()">Abbrechen</button>
+                <button class="btn-secondary" onclick="window.uiManager.stopMidiLearning()">Abbrechen (ESC)</button>
             </div>
         </div>
     </div>
@@ -197,6 +227,23 @@
         window.addEventListener('unhandledrejection', (event) => {
             console.error('Unhandled Promise Rejection:', event.reason);
         });
+
+        // Check for required APIs
+        console.log('🔍 Checking Browser APIs...');
+        console.log('Web MIDI API:', typeof navigator.requestMIDIAccess !== 'undefined' ? '✅' : '❌');
+        console.log('WebSocket API:', typeof WebSocket !== 'undefined' ? '✅' : '❌');
+        console.log('LocalStorage API:', typeof localStorage !== 'undefined' ? '✅' : '❌');
+    </script>
+    
+    <!-- SortableJS for Drag & Drop -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <script>
+        // Verify SortableJS loaded
+        if (typeof Sortable !== 'undefined') {
+            console.log('✅ SortableJS loaded for drag & drop functionality');
+        } else {
+            console.warn('❌ SortableJS failed to load - drag & drop will be disabled');
+        }
     </script>
     
     <!-- Load managers in dependency order -->
@@ -212,16 +259,16 @@
     <script>
         // Module loading verification
         console.log('=== Module Loading Status ===');
-        console.log('Settings Manager:', typeof window.settingsManager);
-        console.log('OBS Manager:', typeof window.obsManager);
-        console.log('MIDI Controller:', typeof window.midiController);
-        console.log('Audio Manager:', typeof window.audioManager);
-        console.log('UI Manager:', typeof window.uiManager);
+        console.log('Settings Manager:', typeof window.settingsManager !== 'undefined' ? '✅' : '❌');
+        console.log('OBS Manager:', typeof window.obsManager !== 'undefined' ? '✅' : '❌');
+        console.log('MIDI Controller:', typeof window.midiController !== 'undefined' ? '✅' : '❌');
+        console.log('Audio Manager:', typeof window.audioManager !== 'undefined' ? '✅' : '❌');
+        console.log('UI Manager:', typeof window.uiManager !== 'undefined' ? '✅' : '❌');
         
-        // Web API availability check
-        console.log('Web MIDI API:', typeof navigator.requestMIDIAccess);
-        console.log('WebSocket API:', typeof WebSocket);
-        console.log('LocalStorage API:', typeof localStorage);
+        // Advanced diagnostics
+        console.log('\n🔍 Advanced Diagnostics:');
+        console.log('Sortable Library:', typeof Sortable !== 'undefined' ? `✅ v${Sortable.version || 'unknown'}` : '❌');
+        console.log('Drag & Drop Ready:', typeof Sortable !== 'undefined' && document.readyState === 'complete' ? '✅' : '⏳');
         
         // Quick start helper
         console.log('\n🎛️ OBS MIDI Mixer loaded!');
@@ -230,6 +277,13 @@
         console.log('  testConnections() - Test all connections'); 
         console.log('  scanMIDI() - Scan MIDI devices');
         console.log('  connectOBS() - Connect to OBS');
+        console.log('  window.uiManager.runConnectionTest() - Full connection test');
+        
+        // Launch Control XL specific help
+        console.log('\n🎹 Launch Control XL Users:');
+        console.log('  1. Aktiviere Low Power Mode (siehe Verbindungen → MIDI Hilfe)');
+        console.log('  2. Das verhindert automatisches Standby nach 2 Minuten');
+        console.log('  3. Bei Problemen: USB neu einstecken');
         
         // Auto-start connection test after initialization
         setTimeout(() => {
@@ -238,6 +292,38 @@
                 window.uiManager.runConnectionTest();
             }
         }, 3000);
+
+        // Performance monitoring
+        let loadTime = performance.now();
+        window.addEventListener('load', () => {
+            const totalLoadTime = performance.now() - loadTime;
+            console.log(`⚡ App loaded in ${totalLoadTime.toFixed(2)}ms`);
+            
+            // Check for potential issues
+            if (totalLoadTime > 5000) {
+                console.warn('⚠️ Slow loading detected - check your system performance');
+            }
+        });
+
+        // Launch Control XL connection monitor
+        setTimeout(() => {
+            if (window.midiController) {
+                const devices = window.midiController.getConnectedDevices();
+                const launchControl = devices.find(d => d.name.toLowerCase().includes('launch control'));
+                
+                if (launchControl) {
+                    console.log('🎛️ Launch Control XL detected!');
+                    console.log('💡 Tip: Aktiviere Low Power Mode für bessere Stabilität');
+                    
+                    // Show helpful notification
+                    setTimeout(() => {
+                        if (window.uiManager && window.uiManager.showSuccessMessage) {
+                            window.uiManager.showSuccessMessage('Launch Control XL erkannt! Aktiviere Low Power Mode für bessere Stabilität.');
+                        }
+                    }, 5000);
+                }
+            }
+        }, 4000);
     </script>
 </body>
 </html>

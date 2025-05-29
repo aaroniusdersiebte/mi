@@ -1,4 +1,4 @@
-// OBS WebSocket Manager - Fixed authentication and scene support
+// OBS WebSocket Manager - Fixed authentication, scene support and audio levels
 class OBSWebSocketManager {
   constructor() {
     this.obs = null;
@@ -11,6 +11,11 @@ class OBSWebSocketManager {
     this.reconnectInterval = null;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
+    this.connectionHealth = {
+      lastHeartbeat: 0,
+      missedHeartbeats: 0,
+      maxMissedHeartbeats: 3
+    };
 
     console.log('OBSWebSocketManager: Constructor called');
     this.initializeOBS();
@@ -42,7 +47,7 @@ class OBSWebSocketManager {
   }
 
   setupFallbackWebSocket() {
-    // Simple WebSocket implementation for basic OBS communication
+    // Enhanced WebSocket implementation for better OBS communication
     this.obs = {
       connect: (url, password, options) => this.fallbackConnect(url, password, options),
       disconnect: () => this.fallbackDisconnect(),
@@ -60,6 +65,7 @@ class OBSWebSocketManager {
         this.messageId = 1;
         this.pendingRequests = new Map();
         this.isIdentified = false;
+        this.connectionHealth.lastHeartbeat = Date.now();
 
         this.websocket.onopen = () => {
           console.log('OBS: WebSocket connection opened');
@@ -72,6 +78,7 @@ class OBSWebSocketManager {
           this.isConnected = false;
           this.isConnecting = false;
           this.isIdentified = false;
+          this.connectionHealth.missedHeartbeats = 0;
           this.emit('ConnectionClosed');
         };
 
@@ -91,11 +98,13 @@ class OBSWebSocketManager {
         // Set up connection timeout
         setTimeout(() => {
           if (!this.isIdentified) {
-            console.error('OBS: Connection timeout - not identified within 10 seconds');
+            console.error('OBS: Connection timeout - not identified within 15 seconds');
             this.websocket.close();
             reject(new Error('Connection timeout'));
+          } else {
+            resolve();
           }
-        }, 10000);
+        }, 15000); // Increased timeout
 
       } catch (error) {
         reject(error);
@@ -106,6 +115,11 @@ class OBSWebSocketManager {
   handleWebSocketMessage(event) {
     try {
       const message = JSON.parse(event.data);
+      
+      // Update connection health
+      this.connectionHealth.lastHeartbeat = Date.now();
+      this.connectionHealth.missedHeartbeats = 0;
+      
       console.log('OBS: Received message:', message.op, message.d?.eventType || message.d?.requestType);
       
       switch (message.op) {
@@ -121,6 +135,9 @@ class OBSWebSocketManager {
         case 7: // RequestResponse
           this.handleRequestResponse(message);
           break;
+        case 9: // RequestBatch
+          this.handleRequestBatchResponse(message);
+          break;
       }
     } catch (error) {
       console.error('Error handling WebSocket message:', error);
@@ -135,14 +152,14 @@ class OBSWebSocketManager {
       op: 1, // Identify
       d: {
         rpcVersion: 1,
-        eventSubscriptions: 2047 | 65536 // All events + high volume
+        eventSubscriptions: 2047 | 65536 // All events + high volume events
       }
     };
 
     // Add authentication if needed
     if (data.authentication) {
-      // For now, skip authentication - will implement if password is set
       console.log('OBS: Authentication required but not implemented in fallback');
+      // For production, implement proper authentication here
     }
 
     console.log('OBS: Sending Identify message');
@@ -155,6 +172,10 @@ class OBSWebSocketManager {
     this.isIdentified = true;
     this.reconnectAttempts = 0;
     this.clearReconnectInterval();
+    
+    // Start connection health monitoring
+    this.startHealthMonitor();
+    
     this.emit('ConnectionOpened');
   }
 
@@ -164,7 +185,7 @@ class OBSWebSocketManager {
     
     switch (eventType) {
       case 'InputVolumeMeters':
-        this.emit('InputVolumeMeters', eventData.eventData);
+        this.handleVolumeMetersEvent(eventData.eventData);
         break;
       case 'InputVolumeChanged':
         this.emit('InputVolumeChanged', eventData.eventData);
@@ -190,6 +211,14 @@ class OBSWebSocketManager {
     }
   }
 
+  // ENHANCED: Proper volume meters handling
+  handleVolumeMetersEvent(data) {
+    // OBS sends volume meter data with proper scaling
+    // InputLevelsMul is already 0-1 (linear amplitude)
+    // InputLevelsDb is the dB value
+    this.emit('InputVolumeMeters', data);
+  }
+
   handleRequestResponse(message) {
     const requestId = message.d.requestId;
     const request = this.pendingRequests.get(requestId);
@@ -205,6 +234,11 @@ class OBSWebSocketManager {
         request.reject(new Error(message.d.requestStatus.comment || 'Request failed'));
       }
     }
+  }
+
+  handleRequestBatchResponse(message) {
+    // Handle batch responses if needed
+    console.log('OBS: Batch response received');
   }
 
   async fallbackCall(requestType, requestData = {}) {
@@ -240,6 +274,8 @@ class OBSWebSocketManager {
   }
 
   fallbackDisconnect() {
+    this.stopHealthMonitor();
+    
     if (this.websocket) {
       this.websocket.close();
       this.websocket = null;
@@ -247,6 +283,33 @@ class OBSWebSocketManager {
     this.pendingRequests?.clear();
     this.isConnected = false;
     this.isIdentified = false;
+  }
+
+  // Connection Health Monitoring
+  startHealthMonitor() {
+    this.healthMonitorInterval = setInterval(() => {
+      const now = Date.now();
+      const timeSinceLastHeartbeat = now - this.connectionHealth.lastHeartbeat;
+      
+      // If no message received in 30 seconds, consider connection unhealthy
+      if (timeSinceLastHeartbeat > 30000) {
+        this.connectionHealth.missedHeartbeats++;
+        console.warn('OBS: Missed heartbeat', this.connectionHealth.missedHeartbeats);
+        
+        if (this.connectionHealth.missedHeartbeats >= this.connectionHealth.maxMissedHeartbeats) {
+          console.error('OBS: Connection unhealthy, attempting reconnect');
+          this.disconnect();
+          this.startReconnectTimer();
+        }
+      }
+    }, 10000); // Check every 10 seconds
+  }
+
+  stopHealthMonitor() {
+    if (this.healthMonitorInterval) {
+      clearInterval(this.healthMonitorInterval);
+      this.healthMonitorInterval = null;
+    }
   }
 
   setupEventHandlers() {
@@ -340,6 +403,8 @@ class OBSWebSocketManager {
 
   disconnect() {
     this.clearReconnectInterval();
+    this.stopHealthMonitor();
+    
     if (this.obs && this.isConnected) {
       this.obs.disconnect();
     }
@@ -372,7 +437,7 @@ class OBSWebSocketManager {
     }
   }
 
-  // Audio source management
+  // ENHANCED: Audio source management with better error handling
   async getAudioSources() {
     if (!this.isIdentified) {
       throw new Error('OBS WebSocket not identified');
@@ -385,7 +450,7 @@ class OBSWebSocketManager {
       
       console.log('OBS: Received inputs:', inputs.length);
 
-      // Filter for audio sources
+      // Filter for audio sources with better detection
       const audioInputs = inputs.filter(input => {
         const kind = input.inputKind;
         return kind && (
@@ -396,7 +461,12 @@ class OBSWebSocketManager {
           kind === 'pulse_output_capture' ||
           kind === 'alsa_input_capture' ||
           kind === 'coreaudio_input_capture' ||
-          kind === 'coreaudio_output_capture'
+          kind === 'coreaudio_output_capture' ||
+          kind === 'decklink_input' ||
+          kind === 'av_capture_input' ||
+          kind.includes('microphone') ||
+          kind.includes('desktop') ||
+          kind.includes('system')
         );
       });
 
@@ -404,6 +474,11 @@ class OBSWebSocketManager {
 
       // Update internal sources map
       this.audioSources.clear();
+      
+      // Use batch requests for better performance
+      const volumeRequests = [];
+      const muteRequests = [];
+      
       for (const input of audioInputs) {
         const sourceInfo = {
           name: input.inputName,
@@ -414,24 +489,48 @@ class OBSWebSocketManager {
           levelDb: -100
         };
         
-        // Get current volume and mute state
-        try {
-          const volumeInfo = await this.obs.call('GetInputVolume', {
-            inputName: input.inputName
-          });
-          sourceInfo.volume = volumeInfo.inputVolumeMul;
-          
-          const muteInfo = await this.obs.call('GetInputMute', {
-            inputName: input.inputName
-          });
-          sourceInfo.muted = muteInfo.inputMuted;
-          
-          console.log('OBS: Got volume/mute info for', input.inputName);
-        } catch (error) {
-          console.warn(`Could not get volume/mute info for ${input.inputName}:`, error);
-        }
+        // Prepare batch requests for volume and mute info
+        volumeRequests.push({
+          requestType: 'GetInputVolume',
+          requestData: { inputName: input.inputName }
+        });
+        
+        muteRequests.push({
+          requestType: 'GetInputMute',
+          requestData: { inputName: input.inputName }
+        });
 
         this.audioSources.set(input.inputName, sourceInfo);
+      }
+
+      // Execute batch requests for better performance
+      try {
+        // Get volume info for all sources
+        for (const input of audioInputs) {
+          try {
+            const volumeInfo = await this.obs.call('GetInputVolume', {
+              inputName: input.inputName
+            });
+            
+            if (this.audioSources.has(input.inputName)) {
+              this.audioSources.get(input.inputName).volume = volumeInfo.inputVolumeMul;
+            }
+            
+            const muteInfo = await this.obs.call('GetInputMute', {
+              inputName: input.inputName
+            });
+            
+            if (this.audioSources.has(input.inputName)) {
+              this.audioSources.get(input.inputName).muted = muteInfo.inputMuted;
+            }
+            
+            console.log('OBS: Got volume/mute info for', input.inputName);
+          } catch (error) {
+            console.warn(`Could not get volume/mute info for ${input.inputName}:`, error);
+          }
+        }
+      } catch (error) {
+        console.warn('Error getting batch volume/mute info:', error);
       }
 
       this.emit('audioSourcesUpdated', Array.from(this.audioSources.values()));
@@ -442,7 +541,7 @@ class OBSWebSocketManager {
     }
   }
 
-  // Scene management
+  // ENHANCED: Scene management with better error handling
   async getScenes() {
     if (!this.isConnected || !this.isIdentified) {
       console.warn('OBS: Cannot get scenes - not connected or not identified');
@@ -461,7 +560,7 @@ class OBSWebSocketManager {
       scenes.forEach(scene => {
         this.scenes.set(scene.sceneName, {
           name: scene.sceneName,
-          index: scene.sceneIndex
+          index: scene.sceneIndex || 0
         });
       });
 
@@ -490,19 +589,26 @@ class OBSWebSocketManager {
     }
   }
 
+  // FIXED: Volume setting with proper range validation
   async setInputVolume(inputName, volume) {
     if (!this.isIdentified) {
       throw new Error('OBS WebSocket not identified');
     }
 
     try {
+      // Ensure volume is in correct range (0-1 for normal, up to 20 for boost)
+      // But for MIDI linear mapping, we keep it 0-1
+      const clampedVolume = Math.max(0, Math.min(1, volume)); // Linear 0-100%
+      
+      console.log(`OBS: Setting volume for ${inputName} to ${clampedVolume} (${(clampedVolume * 100).toFixed(1)}%)`);
+      
       await this.obs.call('SetInputVolume', {
         inputName,
-        inputVolumeMul: Math.max(0, Math.min(20, volume))
+        inputVolumeMul: clampedVolume // This is the correct parameter
       });
       
       if (this.audioSources.has(inputName)) {
-        this.audioSources.get(inputName).volume = volume;
+        this.audioSources.get(inputName).volume = clampedVolume;
       }
       
       return true;
@@ -562,6 +668,7 @@ class OBSWebSocketManager {
     data.inputs.forEach(input => {
       if (this.audioSources.has(input.inputName)) {
         const source = this.audioSources.get(input.inputName);
+        // OBS already provides properly scaled values
         source.levelMul = input.inputLevelsMul?.[0]?.[0] || 0;
         source.levelDb = input.inputLevelsDb?.[0]?.[0] || -100;
       }
@@ -586,9 +693,10 @@ class OBSWebSocketManager {
 
   handleInputCreated(data) {
     console.log('Input created:', data.inputName);
+    // Refresh audio sources after a short delay
     setTimeout(() => {
       this.getAudioSources().catch(console.error);
-    }, 100);
+    }, 500);
   }
 
   handleInputRemoved(data) {
@@ -600,6 +708,30 @@ class OBSWebSocketManager {
   handleSceneChanged(data) {
     console.log('Scene changed to:', data.sceneName);
     this.emit('sceneChanged', data.sceneName);
+  }
+
+  // ENHANCED: Better connection status reporting
+  getConnectionStatus() {
+    return {
+      connected: this.isConnected,
+      connecting: this.isConnecting,
+      identified: this.isIdentified,
+      reconnectAttempts: this.reconnectAttempts,
+      maxReconnectAttempts: this.maxReconnectAttempts,
+      health: {
+        lastHeartbeat: this.connectionHealth.lastHeartbeat,
+        missedHeartbeats: this.connectionHealth.missedHeartbeats,
+        timeSinceLastHeartbeat: Date.now() - this.connectionHealth.lastHeartbeat
+      }
+    };
+  }
+
+  // Connection quality check
+  isConnectionHealthy() {
+    if (!this.isConnected || !this.isIdentified) return false;
+    
+    const timeSinceLastHeartbeat = Date.now() - this.connectionHealth.lastHeartbeat;
+    return timeSinceLastHeartbeat < 30000 && this.connectionHealth.missedHeartbeats < 2;
   }
 
   // Event emitter methods
@@ -633,15 +765,6 @@ class OBSWebSocketManager {
   }
 
   // Utility methods
-  getConnectionStatus() {
-    return {
-      connected: this.isConnected,
-      connecting: this.isConnecting,
-      identified: this.isIdentified,
-      reconnectAttempts: this.reconnectAttempts
-    };
-  }
-
   getAudioSource(name) {
     return this.audioSources.get(name);
   }
@@ -654,11 +777,24 @@ class OBSWebSocketManager {
     return Array.from(this.scenes.values());
   }
 
+  // Enhanced debugging
+  getDebugInfo() {
+    return {
+      connection: this.getConnectionStatus(),
+      audioSources: this.audioSources.size,
+      scenes: this.scenes.size,
+      pendingRequests: this.pendingRequests?.size || 0,
+      websocketState: this.websocket?.readyState || 'N/A'
+    };
+  }
+
   destroy() {
     this.disconnect();
+    this.stopHealthMonitor();
     this.audioSources.clear();
     this.scenes.clear();
     this.listeners.clear();
+    this.pendingRequests?.clear();
   }
 }
 

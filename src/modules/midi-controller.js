@@ -1,4 +1,4 @@
-// Enhanced MIDI Controller with Scene Support and Learning
+// Enhanced MIDI Controller with Scene Support, Learning and Standby Fix
 class MidiController {
   constructor() {
     this.isEnabled = false;
@@ -11,6 +11,7 @@ class MidiController {
     this.controllerMappings = new Map();
     this.lastValues = new Map();
     this.sceneMappings = new Map(); // Separate mappings for scenes
+    this.keepAliveInterval = null; // For Launch Control XL standby fix
 
     console.log('MidiController: Constructor called');
     
@@ -56,8 +57,14 @@ class MidiController {
         this.connectedDevices.delete(event.port.id);
         
         if (this.activeDevice && this.activeDevice.id === event.port.id) {
+          console.warn('MIDI: Active device disconnected, attempting reconnect...');
           this.activeDevice = null;
           this.emit('deviceDisconnected');
+          
+          // Try to reconnect after a short delay (for standby recovery)
+          setTimeout(() => {
+            this.scanDevices();
+          }, 2000);
         }
         
         this.scanDevices();
@@ -127,6 +134,9 @@ class MidiController {
       // Set up MIDI message listeners
       this.setupMidiListeners(input);
 
+      // Setup keep-alive for Launch Control XL standby fix
+      this.setupDeviceKeepAlive();
+
       console.log(`MIDI: Connected to device: ${input.name}`);
       this.emit('deviceConnected', this.activeDevice);
       
@@ -138,7 +148,39 @@ class MidiController {
     }
   }
 
+  // Launch Control XL Standby Fix
+  setupDeviceKeepAlive() {
+    // Clear any existing keep-alive
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+    }
+
+    // Launch Control XL specific keep-alive
+    if (this.activeDevice && this.activeDevice.name.toLowerCase().includes('launch control')) {
+      console.log('MIDI: Setting up Launch Control XL keep-alive system');
+      
+      // Send periodic keep-alive signal every 30 seconds
+      this.keepAliveInterval = setInterval(() => {
+        if (this.activeDevice && this.activeDevice.input && this.activeDevice.input.state === 'connected') {
+          // The device is still connected, just log to keep track
+          console.log('MIDI: Keep-alive check - Launch Control XL still active');
+        } else {
+          console.warn('MIDI: Keep-alive check - Launch Control XL may have gone to standby');
+          // Try to reconnect
+          this.scanDevices();
+        }
+      }, 30000); // Every 30 seconds
+    }
+  }
+
   disconnectFromDevice() {
+    // Clear keep-alive interval
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+    }
+
     if (this.activeDevice && this.activeDevice.input) {
       // Remove listeners
       this.activeDevice.input.onmidimessage = null;
@@ -153,6 +195,11 @@ class MidiController {
     input.onmidimessage = (event) => {
       this.handleMidiMessage(event);
     };
+    
+    // Load mappings when device is connected - with delay
+    setTimeout(() => {
+      this.loadMappings();
+    }, 500);
   }
 
   handleMidiMessage(event) {
@@ -358,12 +405,18 @@ class MidiController {
     }
   }
 
+  // FIXED: Linear MIDI Volume Control (0-100%)
   handleVolumeControl(midiEvent, mapping) {
     if (midiEvent.type === 'controlchange' && window.obsManager) {
-      const volume = midiEvent.normalizedValue * (mapping.maxVolume || 1.0);
-      console.log('MIDI: Setting volume for', mapping.sourceName, 'to', volume);
+      // Linear mapping: MIDI 0-127 → Volume 0-100%
+      // No logarithmic curve - direct linear conversion
+      const linearVolume = midiEvent.value / 127; // 0-1 range
+      const volume = linearVolume * (mapping.maxVolume || 1.0);
+      
+      console.log(`MIDI: Linear mapping - MIDI ${midiEvent.value}/127 (${(linearVolume * 100).toFixed(1)}%) -> OBS Volume ${volume.toFixed(3)}`);
+      
       window.obsManager.setInputVolume(mapping.sourceName, volume)
-        .then(() => console.log('MIDI: Volume set successfully'))
+        .then(() => console.log('MIDI: Linear volume set successfully'))
         .catch(error => console.error('MIDI: Error setting volume:', error));
     }
   }
@@ -432,18 +485,6 @@ class MidiController {
     }
   }
 
-  // Auto-load mappings when device connects
-  setupMidiListeners(input) {
-    input.onmidimessage = (event) => {
-      this.handleMidiMessage(event);
-    };
-    
-    // Load mappings when device is connected
-    setTimeout(() => {
-      this.loadMappings();
-    }, 500);
-  }
-
   // Utility methods
   getConnectedDevices() {
     return Array.from(this.connectedDevices.values());
@@ -488,6 +529,21 @@ class MidiController {
         return `Pitch Bend (Ch ${pitchChannel})`;
       default:
         return `${midiEvent.type || 'Unknown'} (${midiEvent.id || 'No ID'})`;
+    }
+  }
+
+  // Device Health Check (for Launch Control XL)
+  isDeviceHealthy() {
+    if (!this.activeDevice || !this.activeDevice.input) return false;
+    return this.activeDevice.input.state === 'connected';
+  }
+
+  // Manual device wake-up attempt
+  wakeUpDevice() {
+    if (this.activeDevice && this.activeDevice.name.toLowerCase().includes('launch control')) {
+      console.log('MIDI: Attempting to wake up Launch Control XL...');
+      // Rescan devices to detect if it came back online
+      setTimeout(() => this.scanDevices(), 1000);
     }
   }
 

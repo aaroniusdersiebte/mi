@@ -1,4 +1,4 @@
-/* Dark Apple Design System - Enhanced */
+/* Dark Apple Design System - Enhanced with Drag & Drop */
 :root {
   --primary-bg: #1a1a1a;
   --secondary-bg: #2a2a2a;
@@ -237,7 +237,7 @@ body {
   50% { opacity: 0.7; }
 }
 
-/* Audio Sources */
+/* Audio Sources with Drag & Drop */
 .audio-sources {
   display: flex;
   flex-direction: column;
@@ -250,15 +250,41 @@ body {
   border-radius: var(--border-radius);
   padding: 16px;
   transition: var(--transition);
+  position: relative;
 }
 
 .audio-source:hover {
   border-color: var(--accent-orange);
 }
 
+/* Drag Handle */
+.drag-handle {
+  cursor: grab;
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-weight: bold;
+  user-select: none;
+  margin-right: 8px;
+  border-radius: 4px;
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+}
+
+.drag-handle:hover {
+  color: var(--accent-orange);
+  background: var(--tertiary-bg);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+  transform: scale(1.1);
+}
+
 .source-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
 }
@@ -266,15 +292,19 @@ body {
 .source-name {
   font-weight: 600;
   color: var(--text-primary);
+  flex: 1;
+  margin-right: 12px;
 }
 
 .source-level {
   font-size: 12px;
   color: var(--text-secondary);
   font-family: 'Courier New', monospace;
+  min-width: 70px;
+  text-align: right;
 }
 
-/* Audio Visualizer */
+/* Audio Visualizer - ENHANCED */
 .audio-visualizer {
   margin: 8px 0;
   padding: 4px 0;
@@ -293,21 +323,22 @@ body {
   height: 100%;
   background: var(--success-color);
   border-radius: 5px;
-  transition: width 0.1s ease-out;
+  transition: width 0.05s ease-out; /* Faster response for better visualization */
   position: relative;
+  min-width: 2px;
 }
 
 .level-bar.level-low {
-  background: var(--success-color);
+  background: linear-gradient(90deg, #32d74b 0%, #32d74b 100%);
 }
 
 .level-bar.level-medium {
-  background: linear-gradient(90deg, var(--success-color) 0%, var(--warning-color) 100%);
+  background: linear-gradient(90deg, #32d74b 0%, #ff9f0a 100%);
 }
 
 .level-bar.level-high {
-  background: linear-gradient(90deg, var(--warning-color) 0%, var(--error-color) 100%);
-  animation: levelPulse 0.5s ease-in-out;
+  background: linear-gradient(90deg, #ff9f0a 0%, #ff453a 100%);
+  animation: levelPulse 0.3s ease-in-out;
 }
 
 @keyframes levelPulse {
@@ -335,6 +366,7 @@ body {
   margin-top: 8px;
 }
 
+/* Enhanced Volume Slider */
 .volume-slider {
   flex: 1;
   height: 4px;
@@ -344,6 +376,7 @@ body {
   appearance: none;
   -webkit-appearance: none;
   cursor: pointer;
+  position: relative;
 }
 
 .volume-slider::-webkit-slider-thumb {
@@ -354,11 +387,17 @@ body {
   background: var(--accent-orange);
   cursor: pointer;
   transition: var(--transition);
+  box-shadow: 0 0 0 2px rgba(210, 105, 30, 0.3);
 }
 
 .volume-slider::-webkit-slider-thumb:hover {
   background: var(--accent-orange-hover);
   transform: scale(1.1);
+  box-shadow: 0 0 0 4px rgba(210, 105, 30, 0.4);
+}
+
+.volume-slider::-webkit-slider-thumb:active {
+  transform: scale(1.2);
 }
 
 .mute-btn {
@@ -425,6 +464,42 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: var(--transition);
+}
+
+.remove-mapping-btn:hover {
+  background: #cc0000;
+  transform: scale(1.1);
+}
+
+/* Drag & Drop States */
+.sortable-ghost {
+  opacity: 0.5;
+  background: var(--tertiary-bg);
+  border: 2px dashed var(--accent-orange);
+  transform: rotate(2deg);
+}
+
+.sortable-chosen {
+  background: rgba(210, 105, 30, 0.1);
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 2px rgba(210, 105, 30, 0.3);
+}
+
+.sortable-drag {
+  transform: rotate(5deg);
+  box-shadow: var(--shadow-large);
+  z-index: 1000;
+}
+
+/* Dragging States */
+.dragging-audio-source .audio-source:not(.sortable-chosen) {
+  opacity: 0.6;
+}
+
+.dragging-audio-source .drag-handle {
+  color: var(--accent-orange);
+  background: var(--tertiary-bg);
 }
 
 /* Scene Section */
@@ -624,12 +699,14 @@ body {
   background: var(--accent-orange);
   border-color: var(--accent-orange);
   color: white;
+  transform: translateY(-1px);
 }
 
 .scene-mapping-btn:hover {
   background: var(--accent-green);
   border-color: var(--accent-green);
   color: white;
+  transform: translateY(-1px);
 }
 
 .dialog-buttons {
@@ -641,6 +718,7 @@ body {
   border-top: 1px solid var(--border-color);
 }
 
+/* MIDI Learning Active State */
 .midi-learning * {
   cursor: crosshair;
 }
@@ -801,6 +879,7 @@ body {
 
 .btn-primary:hover {
   background: var(--accent-orange-hover);
+  transform: translateY(-1px);
 }
 
 .btn-secondary {
@@ -858,22 +937,29 @@ body {
   margin-bottom: 8px;
 }
 
-/* Scrollbar Styling */
+/* Enhanced Scrollbar Styling */
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
   background: var(--primary-bg);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--tertiary-bg);
   border-radius: 4px;
+  transition: var(--transition);
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-color);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--primary-bg);
 }
 
 /* Notifications */
@@ -891,6 +977,7 @@ body {
 .error-notification, .success-notification {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   animation: slideIn 0.3s ease-out;
+  box-shadow: var(--shadow);
 }
 
 /* Responsive Design */
@@ -914,6 +1001,42 @@ body {
     width: 40px;
     height: 2px;
   }
+  
+  .audio-source-list, .scene-list {
+    flex-direction: column;
+  }
+  
+  .source-mapping-btn, .scene-mapping-btn {
+    text-align: center;
+  }
+}
+
+@media (max-width: 768px) {
+  .header-left {
+    gap: 12px;
+  }
+  
+  .app-title {
+    font-size: 14px;
+  }
+  
+  .connection-status {
+    gap: 8px;
+  }
+  
+  .status-indicator {
+    font-size: 10px;
+  }
+  
+  .modal-content {
+    width: 95%;
+    margin: 10px;
+  }
+  
+  .learning-content {
+    padding: 24px;
+    max-width: 320px;
+  }
 }
 
 /* High contrast mode support */
@@ -921,6 +1044,15 @@ body {
   :root {
     --border-color: #666666;
     --text-secondary: #cccccc;
+    --tertiary-bg: #4a4a4a;
+  }
+  
+  .level-bar {
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+  
+  .drag-handle {
+    border: 1px solid var(--border-color);
   }
 }
 
@@ -930,5 +1062,10 @@ body {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  
+  .sortable-ghost, .sortable-chosen, .sortable-drag {
+    animation: none;
+    transform: none;
   }
 }

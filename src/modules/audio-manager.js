@@ -1,4 +1,4 @@
-// Audio Manager - Fixed for proper initialization
+// Audio Manager - FIXED: Logarithmic/Exponential Volume Curves
 class AudioManager {
   constructor() {
     this.audioSources = new Map();
@@ -37,7 +37,7 @@ class AudioManager {
     // Load saved settings
     this.loadSettings();
     
-    console.log('AudioManager: Successfully initialized');
+    console.log('AudioManager: Successfully initialized with logarithmic volume curves');
   }
 
   setupObsListeners() {
@@ -177,7 +177,7 @@ class AudioManager {
       const source = this.audioSources.get(input.inputName);
       if (!source) return;
 
-      // Update level data
+      // OBS InputLevelsMul is amplitude (0-1), InputLevelsDb is dB (-∞ to 0)
       const levelMul = input.inputLevelsMul?.[0]?.[0] || 0;
       const levelDb = input.inputLevelsDb?.[0]?.[0] || -100;
 
@@ -226,7 +226,7 @@ class AudioManager {
     this.emit('sourcesUpdated', []);
   }
 
-  // Audio source control methods
+  // FIXED: Audio source control methods with exponential volume curves
   async setSourceVolume(sourceName, volume) {
     const source = this.audioSources.get(sourceName);
     if (!source) {
@@ -234,11 +234,16 @@ class AudioManager {
     }
 
     try {
-      await window.obsManager.setInputVolume(sourceName, volume);
-      source.volume = volume;
+      // Apply exponential curve for better human perception
+      const exponentialVolume = this.applyVolumeGammaCurve(volume);
       
-      // Save setting
-      this.saveSourceSettings(sourceName, { volume });
+      console.log(`AudioManager: Setting volume for ${sourceName}: Linear ${volume.toFixed(3)} → Exponential ${exponentialVolume.toFixed(3)}`);
+      
+      await window.obsManager.setInputVolume(sourceName, exponentialVolume);
+      source.volume = exponentialVolume;
+      
+      // Save setting (save the original linear value)
+      this.saveSourceSettings(sourceName, { volume: volume });
       
       return true;
     } catch (error) {
@@ -287,6 +292,78 @@ class AudioManager {
     }
   }
 
+  // ENHANCED: Volume curve functions for human perception
+  
+  /**
+   * Apply exponential gamma curve for better human audio perception
+   * Uses x^4 curve which is optimal for 60dB range (typical consumer audio)
+   * Reference: https://www.dr-lex.be/info-stuff/volumecontrols.html
+   */
+  applyVolumeGammaCurve(linearValue) {
+    // Ensure input is 0-1
+    const x = Math.max(0, Math.min(1, linearValue));
+    
+    // x^4 curve - good approximation for human audio perception
+    // This makes the lower end more sensitive, upper end less sensitive
+    return Math.pow(x, 4);
+  }
+
+  /**
+   * Apply logarithmic curve with soft knee for better usability
+   * This prevents the "too sensitive at top" problem
+   */
+  applyLogarithmicCurveWithSoftKnee(linearValue) {
+    const x = Math.max(0, Math.min(1, linearValue));
+    
+    if (x === 0) return 0;
+    
+    // Soft knee curve: more linear at top, more logarithmic at bottom
+    // This provides better control across the entire range
+    if (x < 0.1) {
+      // Very quiet: use strong exponential curve
+      return Math.pow(x * 10, 4) * 0.1;
+    } else if (x > 0.8) {
+      // Loud section: more linear for better control
+      return 0.64 + (x - 0.8) * 1.8; // 0.8^4 ≈ 0.4096, scaled
+    } else {
+      // Middle section: x^4 curve
+      return Math.pow(x, 4);
+    }
+  }
+
+  /**
+   * Convert linear amplitude to proper dB display
+   * This fixes the visualization issue
+   */
+  amplitudeToDbDisplay(amplitude) {
+    if (amplitude <= 0.0001) return -100; // -∞ represented as -100
+    
+    // Convert amplitude to dB: 20 * log10(amplitude)
+    const db = 20 * Math.log10(amplitude);
+    
+    // Clamp to reasonable range
+    return Math.max(-100, Math.min(0, db));
+  }
+
+  /**
+   * Convert dB to visual meter position (0-1) with logarithmic scaling
+   * This makes the meter more readable like professional audio gear
+   */
+  dbToMeterPosition(db) {
+    if (db <= -60) return 0; // Below -60dB = 0% meter
+    if (db >= 0) return 1;   // 0dB = 100% meter
+    
+    // Logarithmic scale: more space for louder signals (-20dB to 0dB)
+    // This matches professional audio equipment behavior
+    if (db > -20) {
+      // Upper section (-20dB to 0dB): 50% of meter space
+      return 0.5 + (db + 20) / 40; // 0.5 to 1.0
+    } else {
+      // Lower section (-60dB to -20dB): 50% of meter space  
+      return (db + 60) / 80; // 0.0 to 0.5
+    }
+  }
+
   // MIDI Mapping methods
   assignMidiControl(sourceName, midiEvent, controlType) {
     const source = this.audioSources.get(sourceName);
@@ -297,15 +374,17 @@ class AudioManager {
     const mapping = {
       midiId: midiEvent.id,
       sourceName: sourceName,
-      controlType: controlType, // 'volume', 'mute', or 'scene'
-      midiDescription: window.midiController.getMidiEventDescription(midiEvent)
+      controlType: controlType, 
+      midiDescription: window.midiController.getMidiEventDescription(midiEvent),
+      curveType: 'exponential' // Track what curve we're using
     };
 
-    // Set up the MIDI mapping
+    // Set up the MIDI mapping with exponential curve
     const action = {
       type: controlType,
       sourceName: sourceName,
-      maxVolume: 1.0 // Can be adjusted later
+      maxVolume: 1.0,
+      curveType: 'exponential'
     };
 
     window.midiController.mapControl(midiEvent.id, action);
@@ -321,7 +400,7 @@ class AudioManager {
       mapping
     });
 
-    console.log('AudioManager: MIDI mapping created:', mapping);
+    console.log('AudioManager: MIDI mapping created with exponential curve:', mapping);
     return mapping;
   }
 
@@ -401,23 +480,66 @@ class AudioManager {
     return Array.from(this.audioSources.values()).filter(source => source.midiMapping);
   }
 
-  // Volume level utilities
+  // ENHANCED: Volume level utilities with proper dB handling
   dbToLinear(db) {
+    if (db <= -100) return 0;
     return Math.pow(10, db / 20);
   }
 
   linearToDb(linear) {
-    return 20 * Math.log10(Math.max(linear, 0.0001));
+    if (linear <= 0.0001) return -100;
+    return 20 * Math.log10(linear);
   }
 
+  /**
+   * Format volume level for display - FIXED for logarithmic display
+   */
   formatVolumeLevel(levelMul) {
-    const db = this.linearToDb(levelMul);
+    if (!levelMul || levelMul <= 0.0001) return '-∞ dB';
+    
+    // Convert amplitude to dB
+    const db = this.amplitudeToDbDisplay(levelMul);
+    
+    // Format for display
     if (db <= -60) return '-∞ dB';
     return `${db.toFixed(1)} dB`;
   }
 
+  /**
+   * Format volume percentage for display
+   */
   formatVolumePercent(volume) {
     return `${Math.round(volume * 100)}%`;
+  }
+
+  /**
+   * Get meter position for visualization - FIXED for logarithmic meter
+   */
+  getMeterPosition(levelMul) {
+    const db = this.amplitudeToDbDisplay(levelMul);
+    return this.dbToMeterPosition(db);
+  }
+
+  /**
+   * Get level color based on dB value
+   */
+  getLevelColor(levelMul) {
+    const db = this.amplitudeToDbDisplay(levelMul);
+    
+    if (db > -10) return 'high';        // Red: > -10dB (very loud)
+    if (db > -20) return 'medium';      // Yellow: -20 to -10dB (good level)
+    return 'low';                       // Green: < -20dB (quiet)
+  }
+
+  // OBS Volume conversion - FIXED for exponential curves
+  obsVolumeToLinear(obsVolume) {
+    // OBS volume is already amplitude (0-1), but we need to reverse our curve
+    return Math.pow(obsVolume, 1/4); // Inverse of x^4
+  }
+
+  linearToObsVolume(linearValue) {
+    // Apply our exponential curve
+    return this.applyVolumeGammaCurve(linearValue);
   }
 
   // Event emitter methods
@@ -450,6 +572,19 @@ class AudioManager {
     }
   }
 
+  // Debug methods
+  testVolumeCurves() {
+    console.log('=== Volume Curve Test ===');
+    for (let i = 0; i <= 10; i++) {
+      const linear = i / 10;
+      const exponential = this.applyVolumeGammaCurve(linear);
+      const softKnee = this.applyLogarithmicCurveWithSoftKnee(linear);
+      const db = this.amplitudeToDbDisplay(exponential);
+      
+      console.log(`Linear ${linear.toFixed(1)} → Exp ${exponential.toFixed(3)} → ${db.toFixed(1)}dB | SoftKnee ${softKnee.toFixed(3)}`);
+    }
+  }
+
   // Cleanup
   destroy() {
     this.stopUpdating();
@@ -459,5 +594,5 @@ class AudioManager {
 }
 
 // Export as global variable
-console.log('Creating Audio Manager...');
+console.log('Creating Audio Manager with logarithmic volume curves...');
 window.audioManager = new AudioManager();
