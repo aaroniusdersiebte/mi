@@ -444,8 +444,9 @@ class OBSWebSocketManager {
 
   // Scene management
   async getScenes() {
-    if (!this.isIdentified) {
-      throw new Error('OBS WebSocket not identified');
+    if (!this.isConnected || !this.isIdentified) {
+      console.warn('OBS: Cannot get scenes - not connected or not identified');
+      throw new Error('OBS WebSocket not connected or not identified');
     }
 
     try {

@@ -274,10 +274,65 @@ body {
   font-family: 'Courier New', monospace;
 }
 
+/* Audio Visualizer */
+.audio-visualizer {
+  margin: 8px 0;
+  padding: 4px 0;
+}
+
+.level-bar-container {
+  position: relative;
+  height: 12px;
+  background: var(--tertiary-bg);
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+}
+
+.level-bar {
+  height: 100%;
+  background: var(--success-color);
+  border-radius: 5px;
+  transition: width 0.1s ease-out;
+  position: relative;
+}
+
+.level-bar.level-low {
+  background: var(--success-color);
+}
+
+.level-bar.level-medium {
+  background: linear-gradient(90deg, var(--success-color) 0%, var(--warning-color) 100%);
+}
+
+.level-bar.level-high {
+  background: linear-gradient(90deg, var(--warning-color) 0%, var(--error-color) 100%);
+  animation: levelPulse 0.5s ease-in-out;
+}
+
+@keyframes levelPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+.peak-indicator {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 3px;
+  height: 100%;
+  background: var(--error-color);
+  border-radius: 1px;
+  opacity: 0;
+  transition: opacity 0.1s ease-out;
+  box-shadow: 0 0 4px var(--error-color);
+}
+
 .source-controls {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-top: 8px;
 }
 
 .volume-slider {
@@ -518,9 +573,72 @@ body {
   color: var(--accent-orange);
 }
 
-/* MIDI Learning State */
-.midi-learning {
-  cursor: crosshair;
+/* MIDI Mapping Dialog */
+.midi-mapping-dialog {
+  background: var(--secondary-bg);
+  border: 1px solid var(--accent-orange);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: var(--shadow-large);
+  animation: scaleIn 0.3s ease-out;
+}
+
+.midi-mapping-dialog h3 {
+  color: var(--accent-orange);
+  margin-bottom: 12px;
+  font-size: 18px;
+}
+
+.midi-mapping-dialog p {
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}
+
+.mapping-options h4 {
+  color: var(--text-primary);
+  font-size: 14px;
+  margin: 16px 0 8px 0;
+}
+
+.audio-source-list, .scene-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.source-mapping-btn, .scene-mapping-btn {
+  background: var(--tertiary-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.source-mapping-btn:hover {
+  background: var(--accent-orange);
+  border-color: var(--accent-orange);
+  color: white;
+}
+
+.scene-mapping-btn:hover {
+  background: var(--accent-green);
+  border-color: var(--accent-green);
+  color: white;
+}
+
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
 }
 
 .midi-learning * {

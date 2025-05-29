@@ -426,7 +426,22 @@ class MidiController {
         }
       });
       console.log(`MIDI: Loaded ${Object.keys(mappings).length} mappings`);
+      
+      // Emit event to update UI
+      this.emit('mappingsLoaded', mappings);
     }
+  }
+
+  // Auto-load mappings when device connects
+  setupMidiListeners(input) {
+    input.onmidimessage = (event) => {
+      this.handleMidiMessage(event);
+    };
+    
+    // Load mappings when device is connected
+    setTimeout(() => {
+      this.loadMappings();
+    }, 500);
   }
 
   // Utility methods

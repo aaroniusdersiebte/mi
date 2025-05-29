@@ -77,13 +77,22 @@ class AudioManager {
   setupMidiListeners() {
     window.midiController.on('deviceConnected', (device) => {
       console.log('AudioManager: MIDI device connected:', device.name);
-      window.midiController.loadMappings();
+      // Load mappings when MIDI device connects
+      setTimeout(() => {
+        window.midiController.loadMappings();
+      }, 1000);
     });
 
     // Listen for MIDI messages during learning
     window.midiController.on('midiMessage', (message) => {
       console.log('AudioManager: MIDI message received:', message);
       // This will be handled by UI Manager for learning
+    });
+
+    // Listen for mappings loaded event
+    window.midiController.on('mappingsLoaded', (mappings) => {
+      console.log('AudioManager: MIDI mappings loaded:', Object.keys(mappings).length);
+      this.emit('mappingsLoaded');
     });
   }
 

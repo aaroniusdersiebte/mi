@@ -259,9 +259,86 @@ class UIManager {
       window.audioManager.on('muteStateChanged', (data) => this.updateSourceMute(data));
       window.audioManager.on('midiMappingAdded', (data) => this.updateMidiMappings());
       window.audioManager.on('midiMappingRemoved', () => this.updateMidiMappings());
+      window.audioManager.on('mappingsLoaded', () => {
+        console.log('UIManager: Audio mappings loaded, refreshing display');
+        this.updateMidiMappings();
+      });
     } else {
       console.warn('UIManager: Audio Manager not available for listeners');
     }
+  }
+
+  startAudioMidiAssignment(sourceName) {
+    this.learningTarget = sourceName;
+    this.learningType = 'audio';
+    
+    this.showMidiLearningOverlay(`Audio-Quelle: ${sourceName}`);
+    
+    window.midiController?.startLearning((midiEvent) => {
+      this.assignMidiToAudioSource(sourceName, midiEvent);
+      this.learningTarget = null;
+    });
+    
+    // Visual feedback
+    const sourceElement = this.elements.audioSources.querySelector(
+      `[data-source-name="${sourceName}"]`
+    );
+    if (sourceElement) {
+      sourceElement.style.border = '2px solid var(--accent-orange)';
+      setTimeout(() => {
+        sourceElement.style.border = '';
+      }, 3000);
+    }
+  }
+
+  startSceneMidiAssignment(sceneName) {
+    this.learningTarget = sceneName;
+    this.learningType = 'scene';
+    
+    this.showMidiLearningOverlay(`Szene: ${sceneName}`);
+    
+    window.midiController?.startLearning((midiEvent) => {
+      this.assignMidiToScene(sceneName, midiEvent);
+      this.learningTarget = null;
+    });
+    
+    // Visual feedback
+    const sceneBtn = document.querySelector(`[data-scene="${sceneName}"]`);
+    if (sceneBtn) {
+      sceneBtn.style.background = 'var(--accent-orange)';
+      sceneBtn.textContent = 'MIDI lernt...';
+      setTimeout(() => {
+        sceneBtn.style.background = '';
+        sceneBtn.textContent = 'MIDI zuordnen';
+      }, 3000);
+    }
+  }
+
+  assignMidiToAudioSource(sourceName, midiEvent) {
+    const controlType = midiEvent.type === 'controlchange' ? 'volume' : 'mute';
+    window.audioManager?.assignMidiControl(sourceName, midiEvent, controlType);
+    this.showSuccessMessage(`MIDI-Steuerung für "${sourceName}" erstellt!`);
+  }
+
+  assignMidiToScene(sceneName, midiEvent) {
+    if (window.midiController) {
+      window.midiController.mapSceneControl(midiEvent, sceneName);
+      this.showSuccessMessage(`Scene-Hotkey für "${sceneName}" erstellt!`);
+      this.updateSceneMappingsDisplay();
+    }
+  }
+
+  updateSceneMappingsDisplay() {
+    // Update the scene mappings display to show assigned MIDI controls
+    const sceneMappings = window.midiController?.getSceneMappings() || [];
+    
+    sceneMappings.forEach(mapping => {
+      const sceneBtn = document.querySelector(`[data-scene="${mapping.sceneName}"]`);
+      if (sceneBtn) {
+        sceneBtn.textContent = `MIDI: ${mapping.midiDescription}`;
+        sceneBtn.classList.add('mapped');
+      }
+    });
   }
 
   // Layout management
@@ -358,9 +435,19 @@ class UIManager {
       if (window.obsManager && window.obsManager.isConnected && window.obsManager.isIdentified) {
         console.log('UIManager: Loading scenes from OBS...');
         await window.obsManager.getScenes();
+      } else {
+        console.warn('UIManager: Cannot load scenes - OBS not ready');
+        // Retry after a delay
+        setTimeout(() => {
+          this.loadScenes();
+        }, 2000);
       }
     } catch (error) {
       console.error('UIManager: Error loading scenes:', error);
+      // Retry after a delay
+      setTimeout(() => {
+        this.loadScenes();
+      }, 5000);
     }
   }
 
@@ -445,6 +532,12 @@ class UIManager {
         <span class="source-name">${source.name}</span>
         <span class="source-level">-∞ dB</span>
       </div>
+      <div class="audio-visualizer">
+        <div class="level-bar-container">
+          <div class="level-bar" data-level="0"></div>
+          <div class="peak-indicator"></div>
+        </div>
+      </div>
       <div class="source-controls">
         <input type="range" class="volume-slider" 
                min="0" max="1" step="0.01" value="${source.volume}">
@@ -507,9 +600,37 @@ class UIManager {
       );
       
       if (sourceElement) {
+        // Update level text
         const levelElement = sourceElement.querySelector('.source-level');
         if (levelElement) {
           levelElement.textContent = window.audioManager.formatVolumeLevel(source.levelMul);
+        }
+        
+        // Update visual level bar
+        const levelBar = sourceElement.querySelector('.level-bar');
+        const peakIndicator = sourceElement.querySelector('.peak-indicator');
+        
+        if (levelBar) {
+          const levelPercent = Math.max(0, Math.min(100, (source.levelMul || 0) * 100));
+          levelBar.style.width = `${levelPercent}%`;
+          levelBar.dataset.level = levelPercent.toFixed(0);
+          
+          // Color based on level
+          if (levelPercent > 80) {
+            levelBar.className = 'level-bar level-high';
+          } else if (levelPercent > 60) {
+            levelBar.className = 'level-bar level-medium';
+          } else {
+            levelBar.className = 'level-bar level-low';
+          }
+        }
+        
+        // Update peak indicator
+        if (peakIndicator && source.peakLevel > 0.8) {
+          peakIndicator.style.opacity = '1';
+          setTimeout(() => {
+            peakIndicator.style.opacity = '0';
+          }, 100);
         }
       }
     });
@@ -562,80 +683,95 @@ class UIManager {
       this.elements.learnMidiBtn.classList.add('active');
     }
     
+    // Show learning overlay
+    this.showMidiLearningOverlay('Allgemeine MIDI-Kontrolle');
+    
     window.midiController?.startLearning((midiEvent) => {
       console.log('UIManager: General MIDI learning captured:', midiEvent);
-      this.showMidiLearningSuccess(midiEvent);
+      this.handleGeneralMidiLearning(midiEvent);
       this.stopMidiLearning();
     });
   }
 
-  startAudioMidiAssignment(sourceName) {
-    this.learningTarget = sourceName;
-    this.learningType = 'audio';
+  handleGeneralMidiLearning(midiEvent) {
+    // Create a hotkey mapping dialog
+    this.showMidiMappingDialog(midiEvent);
+  }
+
+  showMidiMappingDialog(midiEvent) {
+    const description = window.midiController?.getMidiEventDescription(midiEvent);
     
-    window.midiController?.startLearning((midiEvent) => {
-      this.assignMidiToAudioSource(sourceName, midiEvent);
-      this.learningTarget = null;
+    // Create modal dialog
+    const dialogHTML = `
+      <div class="midi-mapping-dialog">
+        <h3>MIDI-Kontrolle zuordnen</h3>
+        <p>Erkannt: <strong>${description}</strong></p>
+        <div class="mapping-options">
+          <h4>Verfügbare Audio-Quellen:</h4>
+          <div class="audio-source-list" id="audioSourceList"></div>
+          <h4>Verfügbare Szenen:</h4>
+          <div class="scene-list" id="sceneList"></div>
+        </div>
+        <div class="dialog-buttons">
+          <button class="btn-secondary" onclick="this.closest('.midi-mapping-dialog').remove()">Abbrechen</button>
+        </div>
+      </div>
+    `;
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = dialogHTML;
+    document.body.appendChild(overlay);
+    
+    // Populate audio sources
+    const audioSourceList = overlay.querySelector('#audioSourceList');
+    const audioSources = window.audioManager?.getAllAudioSources() || [];
+    audioSources.forEach(source => {
+      const button = document.createElement('button');
+      button.className = 'source-mapping-btn';
+      button.textContent = source.name;
+      button.onclick = () => {
+        this.assignMidiToAudioSource(source.name, midiEvent);
+        overlay.remove();
+      };
+      audioSourceList.appendChild(button);
     });
     
-    // Visual feedback
-    const sourceElement = this.elements.audioSources.querySelector(
-      `[data-source-name="${sourceName}"]`
-    );
-    if (sourceElement) {
-      sourceElement.style.border = '2px solid var(--accent-orange)';
-      setTimeout(() => {
-        sourceElement.style.border = '';
-      }, 3000);
-    }
-  }
-
-  startSceneMidiAssignment(sceneName) {
-    this.learningTarget = sceneName;
-    this.learningType = 'scene';
-    
-    window.midiController?.startLearning((midiEvent) => {
-      this.assignMidiToScene(sceneName, midiEvent);
-      this.learningTarget = null;
+    // Populate scenes
+    const sceneList = overlay.querySelector('#sceneList');
+    this.availableScenes.forEach(scene => {
+      const button = document.createElement('button');
+      button.className = 'scene-mapping-btn';
+      button.textContent = scene.name;
+      button.onclick = () => {
+        this.assignMidiToScene(scene.name, midiEvent);
+        overlay.remove();
+      };
+      sceneList.appendChild(button);
     });
     
-    // Visual feedback
-    const sceneBtn = document.querySelector(`[data-scene="${sceneName}"]`);
-    if (sceneBtn) {
-      sceneBtn.style.background = 'var(--accent-orange)';
-      sceneBtn.textContent = 'MIDI lernt...';
-      setTimeout(() => {
-        sceneBtn.style.background = '';
-        sceneBtn.textContent = 'MIDI zuordnen';
-      }, 3000);
-    }
-  }
-
-  assignMidiToAudioSource(sourceName, midiEvent) {
-    const controlType = midiEvent.type === 'controlchange' ? 'volume' : 'mute';
-    window.audioManager?.assignMidiControl(sourceName, midiEvent, controlType);
-    this.showSuccessMessage(`MIDI-Steuerung für "${sourceName}" erstellt!`);
-  }
-
-  assignMidiToScene(sceneName, midiEvent) {
-    if (window.midiController) {
-      window.midiController.mapSceneControl(midiEvent, sceneName);
-      this.showSuccessMessage(`Scene-Hotkey für "${sceneName}" erstellt!`);
-      this.updateSceneMappingsDisplay();
-    }
-  }
-
-  updateSceneMappingsDisplay() {
-    // Update the scene mappings display to show assigned MIDI controls
-    const sceneMappings = window.midiController?.getSceneMappings() || [];
-    
-    sceneMappings.forEach(mapping => {
-      const sceneBtn = document.querySelector(`[data-scene="${mapping.sceneName}"]`);
-      if (sceneBtn) {
-        sceneBtn.textContent = `MIDI: ${mapping.midiDescription}`;
-        sceneBtn.classList.add('mapped');
+    // Close on outside click
+    overlay.onclick = (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
       }
-    });
+    };
+  }
+
+  showMidiLearningOverlay(target = '') {
+    const overlay = document.createElement('div');
+    overlay.className = 'midi-learning-overlay';
+    overlay.innerHTML = `
+      <div class="learning-content">
+        <div class="learning-icon">🎹</div>
+        <h3>MIDI Learning Aktiv</h3>
+        <p>Bewege einen Regler oder drücke einen Button auf deinem MIDI-Controller</p>
+        <div class="learning-target">${target}</div>
+        <button class="btn-secondary" onclick="window.uiManager.stopMidiLearning()">Abbrechen</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    this.learningOverlay = overlay;
   }
 
   stopMidiLearning() {
@@ -646,6 +782,12 @@ class UIManager {
     if (this.elements.learnMidiBtn) {
       this.elements.learnMidiBtn.textContent = 'MIDI Lernen';
       this.elements.learnMidiBtn.classList.remove('active');
+    }
+    
+    // Remove learning overlay
+    if (this.learningOverlay) {
+      this.learningOverlay.remove();
+      this.learningOverlay = null;
     }
     
     window.midiController?.stopLearning();
