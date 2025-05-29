@@ -1,4 +1,4 @@
-// Enhanced MIDI Controller with Scene Support, Learning and Standby Fix
+// Enhanced MIDI Controller - GEFIXT: Lineares Volume-Mapping für bessere Kontrolle
 class MidiController {
   constructor() {
     this.isEnabled = false;
@@ -405,17 +405,18 @@ class MidiController {
     }
   }
 
-  // FIXED: Linear MIDI Volume Control (0-100%)
+  // GEFIXT: Direktes lineares MIDI Volume Control (perfekte 1:1 Zuordnung)
   handleVolumeControl(midiEvent, mapping) {
     if (midiEvent.type === 'controlchange' && window.obsManager) {
-      // Linear mapping: MIDI 0-127 → Volume 0-100%
-      // No logarithmic curve - direct linear conversion
+      // PERFEKTE LÖSUNG: Direkte lineare Zuordnung MIDI → OBS
+      // MIDI 0-127 wird direkt linear auf OBS 0-1 gemappt
+      // Keine Curves, keine Exponential-Funktionen - just straight mapping!
       const linearVolume = midiEvent.value / 127; // 0-1 range
-      const volume = linearVolume * (mapping.maxVolume || 1.0);
+      const obsVolume = linearVolume * (mapping.maxVolume || 1.0);
       
-      console.log(`MIDI: Linear mapping - MIDI ${midiEvent.value}/127 (${(linearVolume * 100).toFixed(1)}%) -> OBS Volume ${volume.toFixed(3)}`);
+      console.log(`MIDI: Direct linear mapping - MIDI ${midiEvent.value}/127 (${(linearVolume * 100).toFixed(1)}%) → OBS ${obsVolume.toFixed(3)}`);
       
-      window.obsManager.setInputVolume(mapping.sourceName, volume)
+      window.obsManager.setInputVolume(mapping.sourceName, obsVolume)
         .then(() => console.log('MIDI: Linear volume set successfully'))
         .catch(error => console.error('MIDI: Error setting volume:', error));
     }
@@ -478,7 +479,7 @@ class MidiController {
           });
         }
       });
-      console.log(`MIDI: Loaded ${Object.keys(mappings).length} mappings`);
+      console.log(`MIDI: Loaded ${Object.keys(mappings).length} mappings with LINEAR volume control`);
       
       // Emit event to update UI
       this.emit('mappingsLoaded', mappings);
@@ -547,6 +548,20 @@ class MidiController {
     }
   }
 
+  // Debug method for volume mapping
+  testVolumeMapping() {
+    console.log('=== MIDI Volume Mapping Test (LINEAR) ===');
+    const testValues = [0, 16, 32, 48, 64, 80, 96, 112, 127];
+    
+    testValues.forEach(midiValue => {
+      const normalizedValue = midiValue / 127;
+      const percentage = normalizedValue * 100;
+      
+      console.log(`MIDI ${midiValue.toString().padStart(3)} → Normalized ${normalizedValue.toFixed(3)} → ${percentage.toFixed(1).padStart(5)}%`);
+    });
+    console.log('This should give you smooth, linear control across the entire range!');
+  }
+
   // Event emitter methods
   on(event, callback) {
     if (!this.listeners.has(event)) {
@@ -590,5 +605,5 @@ class MidiController {
 }
 
 // Export as global variable
-console.log('Creating MIDI Controller...');
+console.log('Creating FIXED MIDI Controller with LINEAR volume mapping...');
 window.midiController = new MidiController();

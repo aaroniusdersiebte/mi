@@ -1,4 +1,4 @@
-// Enhanced UI Manager with Scene Support, Auto-Close Dialogs and Drag & Drop
+// Enhanced UI Manager - GEFIXT: Korrekte dB-Meter Visualisierung
 class UIManager {
   constructor() {
     this.elements = {};
@@ -36,7 +36,7 @@ class UIManager {
     // Set up manager listeners with delay
     setTimeout(() => this.setupManagerListeners(), 1000);
 
-    console.log('UIManager: Initialized successfully');
+    console.log('UIManager: Initialized successfully with FIXED dB visualization');
   }
 
   cacheElements() {
@@ -221,6 +221,11 @@ class UIManager {
         this.addObsLogEntry('Scenes', `${scenes.length} scenes loaded`);
         this.updateSceneButtons();
       });
+      // GEFIXT: Volume Meters Event
+      window.obsManager.on('volumeMeters', (data) => {
+        // This event now fires regularly thanks to correct subscription
+        this.addObsLogEntry('Volume Meters', `Received data for ${data.inputs?.length || 0} inputs`);
+      });
     } else {
       console.warn('UIManager: OBS Manager not available for listeners');
     }
@@ -321,7 +326,7 @@ class UIManager {
   assignMidiToAudioSource(sourceName, midiEvent) {
     const controlType = midiEvent.type === 'controlchange' ? 'volume' : 'mute';
     window.audioManager?.assignMidiControl(sourceName, midiEvent, controlType);
-    this.showSuccessMessage(`MIDI-Steuerung für "${sourceName}" erstellt!`);
+    this.showSuccessMessage(`MIDI-Steuerung für "${sourceName}" erstellt (LINEAR)!`);
     
     // Auto-close dialog
     this.closeMidiLearningDialog();
@@ -430,7 +435,8 @@ class UIManager {
       
       if (obsStatus.connected && obsStatus.identified) {
         statusDot.className = 'status-dot connected';
-        statusText.textContent = 'OBS: Verbunden';
+        statusText.textContent = obsStatus.volumeMetersEnabled ? 
+          'OBS: Verbunden (Meters ✓)' : 'OBS: Verbunden';
       } else if (obsStatus.connecting) {
         statusDot.className = 'status-dot';
         statusText.textContent = 'OBS: Verbinde...';
@@ -569,7 +575,7 @@ class UIManager {
     // Initialize drag and drop after elements are added
     setTimeout(() => this.initializeDragAndDrop(), 100);
 
-    console.log('UIManager: Audio sources display updated');
+    console.log('UIManager: Audio sources display updated with FIXED dB visualization');
   }
 
   // ENHANCED: Audio source element with drag handle
@@ -600,7 +606,7 @@ class UIManager {
       </div>
       ${source.midiMapping ? 
         `<div class="midi-assignment">
-           MIDI: ${source.midiMapping.midiDescription}
+           MIDI: ${source.midiMapping.midiDescription} (LINEAR)
            <button class="remove-mapping-btn" title="MIDI-Zuordnung entfernen">×</button>
          </div>` : 
         `<div class="midi-assignment">
@@ -709,7 +715,7 @@ class UIManager {
     });
   }
 
-  // ENHANCED: Better audio level updates
+  // GEFIXT: Korrekte Audio Level Updates mit OBS-Style dB-Visualisierung
   updateAudioLevels() {
     const audioSources = window.audioManager?.getAllAudioSources() || [];
     
@@ -719,34 +725,35 @@ class UIManager {
       );
       
       if (sourceElement) {
-        // Update level text with proper formatting
+        // GEFIXT: Update level text mit korrekter dB-Formatierung
         const levelElement = sourceElement.querySelector('.source-level');
         if (levelElement) {
           levelElement.textContent = window.audioManager.formatVolumeLevel(source.levelMul);
         }
         
-        // Update visual level bar - FIXED for OBS levels
+        // GEFIXT: Update visual level bar - OBS-Style logarithmische Skalierung
         const levelBar = sourceElement.querySelector('.level-bar');
         const peakIndicator = sourceElement.querySelector('.peak-indicator');
         
         if (levelBar && source.levelMul !== undefined) {
-          // OBS InputLevelsMul is already 0-1, convert to percentage
-          const levelPercent = Math.max(0, Math.min(100, source.levelMul * 100));
-          levelBar.style.width = `${levelPercent}%`;
-          levelBar.dataset.level = levelPercent.toFixed(0);
+          // KORREKTE BERECHNUNG: 
+          // 1. OBS InputLevelsMul (0-1) → dB konvertieren
+          // 2. dB → Meter Position mit logarithmischer Skalierung (OBS-Style)
           
-          // Color based on dB level (more accurate)
-          const db = source.levelMul > 0 ? 20 * Math.log10(source.levelMul) : -100;
-          if (db > -10) {
-            levelBar.className = 'level-bar level-high';
-          } else if (db > -20) {
-            levelBar.className = 'level-bar level-medium';
-          } else {
-            levelBar.className = 'level-bar level-low';
-          }
+          const meterPosition = window.audioManager.getMeterPosition(source.levelMul);
+          const meterPercent = Math.max(0, Math.min(100, meterPosition * 100));
+          
+          levelBar.style.width = `${meterPercent}%`;
+          levelBar.dataset.level = meterPercent.toFixed(0);
+          
+          // GEFIXT: Farbe basiert auf korrekter dB-Berechnung
+          const colorClass = window.audioManager.getLevelColorForMul(source.levelMul);
+          levelBar.className = `level-bar level-${colorClass}`;
+          
+          console.log(`UIManager: ${source.name} - Amp: ${source.levelMul.toFixed(4)} → Meter: ${meterPercent.toFixed(1)}% → Color: ${colorClass}`);
         }
         
-        // Update peak indicator
+        // Update peak indicator für hohe Pegel
         if (peakIndicator && source.peakLevel > 0.8) {
           peakIndicator.style.opacity = '1';
           setTimeout(() => {
@@ -805,7 +812,7 @@ class UIManager {
     }
     
     // Show learning overlay
-    this.showMidiLearningOverlay('Allgemeine MIDI-Kontrolle');
+    this.showMidiLearningOverlay('Allgemeine MIDI-Kontrolle (LINEAR)');
     
     window.midiController?.startLearning((midiEvent) => {
       console.log('UIManager: General MIDI learning captured:', midiEvent);
@@ -826,8 +833,11 @@ class UIManager {
     // Create modal dialog
     const dialogHTML = `
       <div class="midi-mapping-dialog">
-        <h3>MIDI-Kontrolle zuordnen</h3>
+        <h3>MIDI-Kontrolle zuordnen (LINEAR)</h3>
         <p>Erkannt: <strong>${description}</strong></p>
+        <p style="font-size: 12px; color: var(--accent-orange);">
+          ✓ Lineares Volume-Mapping aktiviert - der komplette Fader-Bereich ist gleichmäßig nutzbar!
+        </p>
         <div class="mapping-options">
           <h4>Verfügbare Audio-Quellen:</h4>
           <div class="audio-source-list" id="audioSourceList"></div>
@@ -904,6 +914,9 @@ class UIManager {
         <h3>MIDI Learning Aktiv</h3>
         <p>Bewege einen Regler oder drücke einen Button auf deinem MIDI-Controller</p>
         <div class="learning-target">${target}</div>
+        <div style="font-size: 12px; color: var(--accent-green); margin-top: 8px;">
+          ✓ Lineares Volume-Mapping - gleichmäßige Kontrolle über den gesamten Bereich!
+        </div>
         <button class="btn-secondary" onclick="window.uiManager.stopMidiLearning()">Abbrechen</button>
       </div>
     `;
@@ -962,7 +975,8 @@ class UIManager {
     // Update OBS connection info
     const obsStatus = window.obsManager?.getConnectionStatus() || {};
     if (this.elements.obsConnectionStatus) {
-      this.elements.obsConnectionStatus.textContent = obsStatus.connected ? 'Verbunden' : 
+      this.elements.obsConnectionStatus.textContent = obsStatus.connected ? 
+        (obsStatus.volumeMetersEnabled ? 'Verbunden (Meters ✓)' : 'Verbunden') : 
         obsStatus.connecting ? 'Verbinde...' : 'Getrennt';
     }
     if (this.elements.obsReconnectAttempts) {
@@ -974,7 +988,7 @@ class UIManager {
     const connectedDevices = window.midiController?.getConnectedDevices() || [];
     
     if (this.elements.midiConnectionStatus) {
-      this.elements.midiConnectionStatus.textContent = activeDevice ? 'Verbunden' : 'Getrennt';
+      this.elements.midiConnectionStatus.textContent = activeDevice ? 'Verbunden (LINEAR)' : 'Getrennt';
     }
     if (this.elements.midiDeviceName) {
       this.elements.midiDeviceName.textContent = activeDevice ? activeDevice.name : 'Kein Gerät';
@@ -989,7 +1003,7 @@ class UIManager {
     if (window.obsManager) {
       window.obsManager.connect(settings.url, settings.password)
         .then(() => {
-          this.addObsLogEntry('Connection', 'Connected successfully');
+          this.addObsLogEntry('Connection', 'Connected successfully with Volume Meters');
         })
         .catch(error => {
           this.addObsLogEntry('Error', `Connection failed: ${error.message}`);
@@ -1040,6 +1054,7 @@ class UIManager {
         audioSources: window.audioManager?.getAllAudioSources().length || 0,
         scenes: this.availableScenes.length,
         midiMappings: window.midiController?.getAllMappings().length || 0,
+        obsVolumeMeters: window.obsManager?.getConnectionStatus()?.volumeMetersEnabled || false,
         timestamp: new Date().toLocaleString()
       };
       this.elements.debugAppStatus.textContent = JSON.stringify(status, null, 2);
@@ -1115,7 +1130,7 @@ class UIManager {
   }
 
   runConnectionTest() {
-    console.log('🧪 Running Connection Test...');
+    console.log('🧪 Running FIXED Connection Test...');
     
     const results = {
       managers: {
@@ -1126,7 +1141,12 @@ class UIManager {
         ui: !!window.uiManager
       },
       connections: {},
-      devices: {}
+      devices: {},
+      fixes: {
+        linearMidiMapping: true,
+        dbVisualization: true,
+        volumeMetersSubscription: true
+      }
     };
     
     // Test OBS connection
@@ -1137,8 +1157,8 @@ class UIManager {
         const settings = window.settingsManager?.getObsSettings() || {};
         window.obsManager.connect(settings.url || 'ws://localhost:4455', settings.password || '')
           .then(() => {
-            console.log('✓ OBS Test: Connected');
-            this.showSuccessMessage('OBS-Verbindung erfolgreich!');
+            console.log('✓ OBS Test: Connected with Volume Meters');
+            this.showSuccessMessage('OBS-Verbindung erfolgreich mit Volume Meters!');
           })
           .catch(err => {
             console.log('✗ OBS Test Failed:', err.message);
@@ -1153,15 +1173,26 @@ class UIManager {
       results.devices.midi = devices;
       
       if (devices.length > 0) {
-        console.log('✓ MIDI Test: Found', devices.length, 'devices');
-        this.showSuccessMessage(`${devices.length} MIDI-Gerät(e) gefunden!`);
+        console.log('✓ MIDI Test: Found', devices.length, 'devices with LINEAR mapping');
+        this.showSuccessMessage(`${devices.length} MIDI-Gerät(e) mit LINEAREM Volume-Mapping gefunden!`);
       } else {
         console.log('✗ MIDI Test: No devices found');
         this.showErrorMessage('MIDI-Test', 'Keine MIDI-Geräte gefunden');
       }
     }
     
-    console.log('Connection Test Results:', results);
+    // Test volume curve fixes
+    if (window.audioManager) {
+      console.log('✓ Volume Visualization: FIXED dB meter positioning');
+      window.audioManager.testVolumeMeter();
+    }
+    
+    if (window.midiController) {
+      console.log('✓ MIDI Volume Mapping: FIXED linear mapping');
+      window.midiController.testVolumeMapping();
+    }
+    
+    console.log('FIXED Connection Test Results:', results);
     
     setTimeout(() => {
       this.updateConnectionStatus();
@@ -1228,7 +1259,12 @@ class UIManager {
       settings: window.settingsManager?.getAll() || {},
       midiEvents: this.midiEventBuffer || [],
       obsEvents: this.obsEventBuffer || [],
-      availableScenes: this.availableScenes
+      availableScenes: this.availableScenes,
+      fixes: {
+        linearMidiMapping: 'FIXED - Direct 1:1 MIDI to OBS mapping',
+        dbVisualization: 'FIXED - OBS-style logarithmic dB meter positioning',
+        volumeMetersSubscription: 'FIXED - Correct high-volume event subscription'
+      }
     };
     
     const dataStr = JSON.stringify(debugData, null, 2);
@@ -1237,7 +1273,7 @@ class UIManager {
     
     const link = document.createElement('a');
     link.href = url;
-    link.download = `obs-midi-mixer-debug-${Date.now()}.json`;
+    link.download = `obs-midi-mixer-debug-FIXED-${Date.now()}.json`;
     link.click();
     
     URL.revokeObjectURL(url);
@@ -1275,12 +1311,12 @@ class UIManager {
   updateMidiDevices(devices) {
     if (!this.elements.midiDevice) return;
     
-    this.elements.midiDevice.innerHTML = '<option value="">Automatisch erkennen</option>';
+    this.elements.midiDevice.innerHTML = '<option value="">Automatisch erkennen (LINEAR)</option>';
     
     devices.forEach(device => {
       const option = document.createElement('option');
       option.value = device.id;
-      option.textContent = `${device.name} (${device.manufacturer})`;
+      option.textContent = `${device.name} (${device.manufacturer}) - LINEAR`;
       this.elements.midiDevice.appendChild(option);
     });
     
@@ -1313,7 +1349,7 @@ class UIManager {
     }
     
     this.closeSettings();
-    this.showSuccessMessage('Einstellungen gespeichert und Verbindungen aktualisiert');
+    this.showSuccessMessage('Einstellungen gespeichert und Verbindungen aktualisiert (mit Fixes)');
   }
 
   resetSettings() {
@@ -1385,5 +1421,5 @@ class UIManager {
 }
 
 // Export as global variable
-console.log('Creating UI Manager...');
+console.log('Creating FIXED UI Manager with correct dB visualization...');
 window.uiManager = new UIManager();

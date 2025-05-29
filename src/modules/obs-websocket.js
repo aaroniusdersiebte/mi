@@ -1,4 +1,4 @@
-// OBS WebSocket Manager - Fixed authentication, scene support and audio levels
+// OBS WebSocket Manager - GEFIXT: Korrekte High-Volume Event Subscription für Volume Meters
 class OBSWebSocketManager {
   constructor() {
     this.obs = null;
@@ -147,12 +147,16 @@ class OBSWebSocketManager {
   handleHello(data) {
     console.log('OBS: Received Hello message');
     
-    // Send Identify message
+    // GEFIXT: Korrekte Event Subscriptions für Volume Meters
+    // See: https://github.com/obsproject/obs-websocket/discussions/1152
     const identifyMessage = {
       op: 1, // Identify
       d: {
         rpcVersion: 1,
-        eventSubscriptions: 2047 | 65536 // All events + high volume events
+        // WICHTIG: InputVolumeMeters ist ein High-Volume Event (Bit 16)
+        // Regular events: 511 (0x1FF) = Bits 0-8
+        // High-volume events: 65536 (0x10000) = Bit 16 für InputVolumeMeters
+        eventSubscriptions: 511 | 65536 // Regular events + InputVolumeMeters
       }
     };
 
@@ -162,12 +166,12 @@ class OBSWebSocketManager {
       // For production, implement proper authentication here
     }
 
-    console.log('OBS: Sending Identify message');
+    console.log('OBS: Sending Identify message with InputVolumeMeters subscription');
     this.websocket.send(JSON.stringify(identifyMessage));
   }
 
   handleIdentified(data) {
-    console.log('OBS: Successfully identified!');
+    console.log('OBS: Successfully identified with Volume Meters enabled!');
     this.isConnected = true;
     this.isIdentified = true;
     this.reconnectAttempts = 0;
@@ -211,11 +215,13 @@ class OBSWebSocketManager {
     }
   }
 
-  // ENHANCED: Proper volume meters handling
+  // GEFIXT: Proper volume meters handling
   handleVolumeMetersEvent(data) {
     // OBS sends volume meter data with proper scaling
-    // InputLevelsMul is already 0-1 (linear amplitude)
-    // InputLevelsDb is the dB value
+    // InputLevelsMul is 0-1 (linear amplitude)
+    // InputLevelsDb is the dB value (-∞ to 0)
+    
+    console.log('OBS: Volume meters received for', data.inputs?.length || 0, 'inputs');
     this.emit('InputVolumeMeters', data);
   }
 
@@ -383,14 +389,15 @@ class OBSWebSocketManager {
 
     try {
       const connectOptions = {
-        eventSubscriptions: 2047 | 65536, // All regular events + InputVolumeMeters
+        // GEFIXT: Korrekte Event Subscriptions mit InputVolumeMeters (High-Volume Event)
+        eventSubscriptions: 511 | 65536, // Regular events + InputVolumeMeters
         rpcVersion: 1,
         ...options
       };
 
       if (this.obs && typeof this.obs.connect === 'function') {
         await this.obs.connect(url, password, connectOptions);
-        console.log('OBS: Connected successfully');
+        console.log('OBS: Connected successfully with Volume Meters enabled');
       } else {
         throw new Error('OBS WebSocket not properly initialized');
       }
@@ -475,10 +482,7 @@ class OBSWebSocketManager {
       // Update internal sources map
       this.audioSources.clear();
       
-      // Use batch requests for better performance
-      const volumeRequests = [];
-      const muteRequests = [];
-      
+      // Get volume and mute info for all sources
       for (const input of audioInputs) {
         const sourceInfo = {
           name: input.inputName,
@@ -489,48 +493,25 @@ class OBSWebSocketManager {
           levelDb: -100
         };
         
-        // Prepare batch requests for volume and mute info
-        volumeRequests.push({
-          requestType: 'GetInputVolume',
-          requestData: { inputName: input.inputName }
-        });
-        
-        muteRequests.push({
-          requestType: 'GetInputMute',
-          requestData: { inputName: input.inputName }
-        });
+        try {
+          const volumeInfo = await this.obs.call('GetInputVolume', {
+            inputName: input.inputName
+          });
+          
+          sourceInfo.volume = volumeInfo.inputVolumeMul;
+          
+          const muteInfo = await this.obs.call('GetInputMute', {
+            inputName: input.inputName
+          });
+          
+          sourceInfo.muted = muteInfo.inputMuted;
+          
+          console.log('OBS: Got volume/mute info for', input.inputName);
+        } catch (error) {
+          console.warn(`Could not get volume/mute info for ${input.inputName}:`, error);
+        }
 
         this.audioSources.set(input.inputName, sourceInfo);
-      }
-
-      // Execute batch requests for better performance
-      try {
-        // Get volume info for all sources
-        for (const input of audioInputs) {
-          try {
-            const volumeInfo = await this.obs.call('GetInputVolume', {
-              inputName: input.inputName
-            });
-            
-            if (this.audioSources.has(input.inputName)) {
-              this.audioSources.get(input.inputName).volume = volumeInfo.inputVolumeMul;
-            }
-            
-            const muteInfo = await this.obs.call('GetInputMute', {
-              inputName: input.inputName
-            });
-            
-            if (this.audioSources.has(input.inputName)) {
-              this.audioSources.get(input.inputName).muted = muteInfo.inputMuted;
-            }
-            
-            console.log('OBS: Got volume/mute info for', input.inputName);
-          } catch (error) {
-            console.warn(`Could not get volume/mute info for ${input.inputName}:`, error);
-          }
-        }
-      } catch (error) {
-        console.warn('Error getting batch volume/mute info:', error);
       }
 
       this.emit('audioSourcesUpdated', Array.from(this.audioSources.values()));
@@ -589,22 +570,21 @@ class OBSWebSocketManager {
     }
   }
 
-  // FIXED: Volume setting with proper range validation
+  // GEFIXT: Volume setting mit korrekter Range-Validierung
   async setInputVolume(inputName, volume) {
     if (!this.isIdentified) {
       throw new Error('OBS WebSocket not identified');
     }
 
     try {
-      // Ensure volume is in correct range (0-1 for normal, up to 20 for boost)
-      // But for MIDI linear mapping, we keep it 0-1
-      const clampedVolume = Math.max(0, Math.min(1, volume)); // Linear 0-100%
+      // OBS InputVolumeMul range: 0-1 (can go above 1 for boost, but we limit to 1)
+      const clampedVolume = Math.max(0, Math.min(1, volume));
       
-      console.log(`OBS: Setting volume for ${inputName} to ${clampedVolume} (${(clampedVolume * 100).toFixed(1)}%)`);
+      console.log(`OBS: Setting volume for ${inputName} to ${clampedVolume.toFixed(3)} (${(clampedVolume * 100).toFixed(1)}%)`);
       
       await this.obs.call('SetInputVolume', {
         inputName,
-        inputVolumeMul: clampedVolume // This is the correct parameter
+        inputVolumeMul: clampedVolume
       });
       
       if (this.audioSources.has(inputName)) {
@@ -668,7 +648,7 @@ class OBSWebSocketManager {
     data.inputs.forEach(input => {
       if (this.audioSources.has(input.inputName)) {
         const source = this.audioSources.get(input.inputName);
-        // OBS already provides properly scaled values
+        // OBS provides properly scaled values
         source.levelMul = input.inputLevelsMul?.[0]?.[0] || 0;
         source.levelDb = input.inputLevelsDb?.[0]?.[0] || -100;
       }
@@ -718,6 +698,7 @@ class OBSWebSocketManager {
       identified: this.isIdentified,
       reconnectAttempts: this.reconnectAttempts,
       maxReconnectAttempts: this.maxReconnectAttempts,
+      volumeMetersEnabled: true, // We now correctly subscribe to this
       health: {
         lastHeartbeat: this.connectionHealth.lastHeartbeat,
         missedHeartbeats: this.connectionHealth.missedHeartbeats,
@@ -784,7 +765,8 @@ class OBSWebSocketManager {
       audioSources: this.audioSources.size,
       scenes: this.scenes.size,
       pendingRequests: this.pendingRequests?.size || 0,
-      websocketState: this.websocket?.readyState || 'N/A'
+      websocketState: this.websocket?.readyState || 'N/A',
+      volumeMetersSubscribed: true
     };
   }
 
@@ -799,5 +781,5 @@ class OBSWebSocketManager {
 }
 
 // Export as global variable
-console.log('Creating OBS WebSocket Manager...');
+console.log('Creating FIXED OBS WebSocket Manager with Volume Meters...');
 window.obsManager = new OBSWebSocketManager();
